@@ -30,6 +30,38 @@ target_compile_features(chipz INTERFACE cxx_std_17)
 # Add alias for use with add_subdirectory
 add_library(chipz::chipz ALIAS chipz)
 
+# Platform-specific optional libraries
+option(CHIPZ_ENABLE_FREERTOS "Build FreeRTOS platform support (C++ allocator)" OFF)
+
+if(CHIPZ_ENABLE_FREERTOS)
+    # FreeRTOS platform library (compiled, not header-only)
+    # Note: This library requires FreeRTOS headers to be in the include path.
+    # When used in a project with stm32cubemx, link it after stm32cubemx so
+    # it inherits the FreeRTOS include directories.
+    add_library(chipz_platform_freertos OBJECT
+        src/platform/freertos/cpp_allocator.cpp
+    )
+
+    target_include_directories(chipz_platform_freertos PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    )
+
+    # Inherit include paths from parent if available
+    # This allows the platform library to find FreeRTOS.h
+    if(TARGET stm32cubemx)
+        target_link_libraries(chipz_platform_freertos PUBLIC stm32cubemx)
+    endif()
+
+    target_compile_features(chipz_platform_freertos PUBLIC cxx_std_17)
+
+    add_library(chipz::platform::freertos ALIAS chipz_platform_freertos)
+
+    message(STATUS "Chipz: FreeRTOS platform support enabled")
+    message(STATUS "  Note: Ensure FreeRTOS headers are in include path")
+    message(STATUS "  Note: Link with chipz::platform::freertos in your application")
+endif()
+
 # Examples
 if(CHIPZ_BUILD_EXAMPLES)
     add_subdirectory(examples)

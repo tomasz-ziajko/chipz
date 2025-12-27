@@ -18,11 +18,14 @@ namespace interfaces {
  *
  * This class is designed to wrap hardware abstraction layers like STM32 HAL,
  * Arduino SPI, or custom SPI implementations.
+ *
+ * Supports async (interrupt-driven) SPI operations by default.
+ * Call handleInterrupt() from your HAL SPI complete callbacks.
  */
 class SPIInterface : public CommunicationInterface {
 public:
     /**
-     * @brief Function pointer type for SPI transfer operation
+     * @brief Function pointer type for SPI transfer operation (async)
      * SPI is full-duplex: transmits and receives simultaneously
      * @param tx_buffer Pointer to data to transmit
      * @param rx_buffer Pointer to buffer for received data
@@ -41,7 +44,7 @@ public:
 
     /**
      * @brief Construct SPI interface with low-level SPI functions
-     * @param transfer_func Function to perform SPI transfer
+     * @param transfer_func Function to perform async SPI transfer
      * @param cs_func Function to control chip select (optional)
      *
      * Note: Buffers are not pre-allocated. They are allocated on first use
@@ -53,28 +56,26 @@ public:
         , spi_transfer_(transfer_func)
         , chip_select_(cs_func)
     {
-        // Buffers in base class start empty and grow on demand
+        // Buffers start empty and will be allocated on first use
     }
 
     /**
-     * @brief Transmit data via SPI
+     * @brief Transmit data via SPI (async)
      * Note: SPI is full-duplex, so this also receives data into rx_buffer
      * @param data Pointer to data to transmit
      * @param length Number of bytes to transmit
      * @return true if transmission started successfully, false otherwise
+     *
+     * Note: This starts an async operation. Call handleInterrupt() when complete.
      */
     bool transmit(const uint8_t* data, size_t length) override {
         if (transfer_in_progress_ || !spi_transfer_) {
             return false;
         }
 
-        // Ensure buffers are large enough (allocates on first use, grows if needed)
-        ensureBufferSize(tx_buffer_, length);
-        ensureBufferSize(rx_buffer_, length);
-
-        // Copy data to internal buffer
-        for (size_t i = 0; i < length; ++i) {
-            tx_buffer_[i] = data[i];
+        // Ensure RX buffer is allocated (SPI is full-duplex, always receives)
+        if (rx_buffer_.size() < length) {
+            rx_buffer_.resize(length);
         }
 
         transfer_in_progress_ = true;
@@ -84,42 +85,46 @@ public:
             chip_select_(true);
         }
 
-        // Perform SPI transfer (full-duplex)
-        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(),
+        // Start async SPI transfer - pass data buffer directly to HAL
+        int result = spi_transfer_(const_cast<uint8_t*>(data),
+                                   rx_buffer_.data(),
                                    static_cast<uint16_t>(length));
 
-        // Deassert chip select (if provided)
-        if (chip_select_) {
-            chip_select_(false);
+        if (result != 0) {
+            // Failed to start - reset state
+            transfer_in_progress_ = false;
+            if (chip_select_) {
+                chip_select_(false);
+            }
+            return false;
         }
 
-        transfer_in_progress_ = false;
-
-        // Notify completion
-        notifyTransferComplete(result == 0);
-
-        return (result == 0);
+        // Transfer started successfully - completion will be signaled via handleInterrupt()
+        return true;
     }
 
     /**
-     * @brief Receive data via SPI
+     * @brief Receive data via SPI (async)
      * Note: SPI requires transmitting to receive. This sends zeros (dummy bytes)
      * @param buffer Pointer to buffer where received data will be stored
      * @param length Number of bytes to receive
      * @return true if reception started successfully, false otherwise
+     *
+     * Note: This starts an async operation. Call handleInterrupt() when complete.
      */
     bool receive(uint8_t* buffer, size_t length) override {
         if (transfer_in_progress_ || !spi_transfer_) {
             return false;
         }
 
-        // Ensure buffers are large enough (allocates on first use, grows if needed)
-        ensureBufferSize(tx_buffer_, length);
-        ensureBufferSize(rx_buffer_, length);
-
-        // Fill TX buffer with dummy bytes (zeros) for receive operation
-        for (size_t i = 0; i < length; ++i) {
-            tx_buffer_[i] = 0x00;
+        // Ensure TX buffer is large enough and fill with zeros (dummy bytes for SPI receive)
+        if (tx_buffer_.size() < length) {
+            tx_buffer_.resize(length, 0x00);
+        } else {
+            // Buffer exists but might not be all zeros, fill the needed portion
+            for (size_t i = 0; i < length; ++i) {
+                tx_buffer_[i] = 0x00;
+            }
         }
 
         transfer_in_progress_ = true;
@@ -129,80 +134,41 @@ public:
             chip_select_(true);
         }
 
-        // Perform SPI transfer (send dummy bytes, receive data)
-        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(),
+        // Start async SPI transfer - send dummy bytes, receive into buffer
+        int result = spi_transfer_(tx_buffer_.data(), buffer,
                                    static_cast<uint16_t>(length));
 
-        // Deassert chip select (if provided)
-        if (chip_select_) {
-            chip_select_(false);
-        }
-
-        // Copy from internal buffer to user buffer
-        if (result == 0) {
-            for (size_t i = 0; i < length; ++i) {
-                buffer[i] = rx_buffer_[i];
+        if (result != 0) {
+            // Failed to start - reset state
+            transfer_in_progress_ = false;
+            if (chip_select_) {
+                chip_select_(false);
             }
-        }
-
-        transfer_in_progress_ = false;
-
-        // Notify completion
-        notifyTransferComplete(result == 0);
-
-        return (result == 0);
-    }
-
-    /**
-     * @brief Perform a full-duplex SPI transfer (transmit and receive simultaneously)
-     * @param tx_data Pointer to data to transmit
-     * @param rx_data Pointer to buffer for received data
-     * @param length Number of bytes to transfer
-     * @return true if transfer successful, false otherwise
-     */
-    bool transfer(const uint8_t* tx_data, uint8_t* rx_data, size_t length) {
-        if (transfer_in_progress_ || !spi_transfer_) {
             return false;
         }
 
-        // Ensure buffers are large enough (allocates on first use, grows if needed)
-        ensureBufferSize(tx_buffer_, length);
-        ensureBufferSize(rx_buffer_, length);
+        // Transfer started successfully - completion will be signaled via handleInterrupt()
+        return true;
+    }
 
-        // Copy TX data to internal buffer
-        for (size_t i = 0; i < length; ++i) {
-            tx_buffer_[i] = tx_data[i];
-        }
-
-        transfer_in_progress_ = true;
-
-        // Assert chip select (if provided)
-        if (chip_select_) {
-            chip_select_(true);
-        }
-
-        // Perform SPI transfer
-        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(),
-                                   static_cast<uint16_t>(length));
+    /**
+     * @brief Handle SPI transfer completion (call from HAL callbacks)
+     * @param success True if transfer succeeded, false on error
+     *
+     * Call this from HAL_SPI_TxRxCpltCallback, HAL_SPI_RxCpltCallback,
+     * or HAL_SPI_ErrorCallback
+     */
+    void handleInterrupt(bool success) {
+        transfer_in_progress_ = false;
 
         // Deassert chip select (if provided)
         if (chip_select_) {
             chip_select_(false);
         }
 
-        // Copy RX data from internal buffer
-        if (result == 0) {
-            for (size_t i = 0; i < length; ++i) {
-                rx_data[i] = rx_buffer_[i];
-            }
-        }
-
-        transfer_in_progress_ = false;
-
-        // Notify completion
-        notifyTransferComplete(result == 0);
-
-        return (result == 0);
+        // Notify registered callback (this will call device's onTransferComplete)
+        // The HAL has already filled/sent the buffer that was passed to transmit/receive
+        notifyTransferComplete(success);
     }
 
     /**

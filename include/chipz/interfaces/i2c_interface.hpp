@@ -18,6 +18,9 @@ namespace interfaces {
  *
  * This class is designed to wrap hardware abstraction layers like STM32 HAL,
  * Arduino Wire, or custom I2C implementations.
+ *
+ * Supports async (interrupt-driven) I2C operations by default.
+ * Call handleInterrupt() from your HAL I2C complete callbacks.
  */
 class I2CInterface : public CommunicationInterface {
 public:
@@ -69,32 +72,29 @@ public:
      * @param data Pointer to data to transmit
      * @param length Number of bytes to transmit
      * @return true if transmission started successfully, false otherwise
+     *
+     * Note: This starts an async operation. Call handleInterrupt() when complete.
      */
     bool transmit(const uint8_t* data, size_t length) override {
         if (transfer_in_progress_ || !i2c_write_) {
             return false;
         }
 
-        // Ensure buffer is large enough (allocates on first use, grows if needed)
-        ensureBufferSize(tx_buffer_, length);
-
-        // Copy data to internal buffer
-        for (size_t i = 0; i < length; ++i) {
-            tx_buffer_[i] = data[i];
-        }
-
         transfer_in_progress_ = true;
 
-        // Perform I2C write operation
+        // Start async I2C write operation using stored memory address
+        // Pass the data buffer directly to HAL - no copying needed
         int result = i2c_write_(device_address_, current_mem_address_,
-                                tx_buffer_.data(), static_cast<uint16_t>(length));
+                                data, static_cast<uint16_t>(length));
 
-        transfer_in_progress_ = false;
+        if (result != 0) {
+            // Failed to start - reset state
+            transfer_in_progress_ = false;
+            return false;
+        }
 
-        // Notify completion
-        notifyTransferComplete(result == 0);
-
-        return (result == 0);
+        // Transfer started successfully - completion will be signaled via handleInterrupt()
+        return true;
     }
 
     /**
@@ -102,34 +102,29 @@ public:
      * @param buffer Pointer to buffer where received data will be stored
      * @param length Number of bytes to receive
      * @return true if reception started successfully, false otherwise
+     *
+     * Note: This starts an async operation. Call handleInterrupt() when complete.
      */
     bool receive(uint8_t* buffer, size_t length) override {
         if (transfer_in_progress_ || !i2c_read_) {
             return false;
         }
 
-        // Ensure buffer is large enough (allocates on first use, grows if needed)
-        ensureBufferSize(rx_buffer_, length);
-
         transfer_in_progress_ = true;
 
-        // Perform I2C read operation
+        // Start async I2C read operation using stored memory address
+        // Pass the buffer directly to HAL - it will fill it during interrupt
         int result = i2c_read_(device_address_, current_mem_address_,
-                               rx_buffer_.data(), static_cast<uint16_t>(length));
+                               buffer, static_cast<uint16_t>(length));
 
-        // Copy from internal buffer to user buffer
-        if (result == 0) {
-            for (size_t i = 0; i < length; ++i) {
-                buffer[i] = rx_buffer_[i];
-            }
+        if (result != 0) {
+            // Failed to start - reset state
+            transfer_in_progress_ = false;
+            return false;
         }
 
-        transfer_in_progress_ = false;
-
-        // Notify completion
-        notifyTransferComplete(result == 0);
-
-        return (result == 0);
+        // Transfer started successfully - completion will be signaled via handleInterrupt()
+        return true;
     }
 
     /**
@@ -154,6 +149,21 @@ public:
      */
     uint8_t getDeviceAddress() const {
         return device_address_;
+    }
+
+    /**
+     * @brief Handle I2C transfer completion (call from HAL callbacks)
+     * @param success True if transfer succeeded, false on error
+     *
+     * Call this from HAL_I2C_MemTxCpltCallback, HAL_I2C_MemRxCpltCallback,
+     * or HAL_I2C_ErrorCallback
+     */
+    void handleInterrupt(bool success) {
+        transfer_in_progress_ = false;
+
+        // Notify registered callback (this will call device's onTransferComplete)
+        // The HAL has already filled/sent the buffer that was passed to transmit/receive
+        notifyTransferComplete(success);
     }
 
 private:

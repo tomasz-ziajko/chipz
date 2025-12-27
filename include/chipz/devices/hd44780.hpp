@@ -60,6 +60,7 @@ public:
         , tick_timer_(0)
         , last_tick_(0)
         , delay_(0)
+        , get_tick_(get_tick)
         , init_step_(0)
         , transfer_complete_(true)
         , current_byte_(0)
@@ -74,7 +75,6 @@ public:
         , buffer_write_length_(0)
         , buffer_write_chars_sent_(0)
         , buffer_write_need_cursor_(false)
-        , get_tick_(get_tick)
         , update_pins_(update_pins)
     {
         // Get rows and columns from config

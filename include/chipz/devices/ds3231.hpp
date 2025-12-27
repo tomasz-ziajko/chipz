@@ -2,6 +2,7 @@
 #define CHIPZ_DEVICES_DS3231_HPP
 
 #include "../peripheral.hpp"
+#include "../interfaces/i2c_interface.hpp"
 #include <cstdint>
 #include <ctime>
 #include <array>
@@ -56,6 +57,7 @@ public:
         , current_time_{}
         , tick_timer_(0)
         , last_tick_(0)
+        , get_tick_(get_tick)
         , time_update_request_(false)
         , time_update_waiting_for_interrupt_(false)
         , alarm1_update_request_(false)
@@ -81,7 +83,6 @@ public:
         , control_status_(0)
         , aging_offset_(0)
         , temp_(0)
-        , get_tick_(get_tick)
     {
         // Set up I2C completion callback
         comm_.setTransferCompleteCallback(
@@ -117,6 +118,7 @@ public:
         }
 
         // Start in PREINIT state - query status register to check oscillator state
+        setRegisterAddress(STATUS_START_ADDRESS);
         if (!comm_.receive(comm_.getRxBuffer(), STATUS_REGISTER_LENGTH)) {
             status_ = Status::Error;
             return false;
@@ -160,6 +162,7 @@ public:
                 // OSF must be explicitly cleared by writing 0 to bit 7
                 comm_.getTxBuffer()[0] = control_;
                 comm_.getTxBuffer()[1] = control_status_ & 0x7F; // Clear OSF bit (bit 7)
+                setRegisterAddress(STATUS_START_ADDRESS);
                 comm_.transmit(comm_.getTxBuffer(), 2);
                 osf_clear_pending_ = true;
                 // Stay in CLEARING_OSF state (transition to IDLE happens in callback)
@@ -171,6 +174,7 @@ public:
                     time_update_request_ = false;
                     time_update_waiting_for_interrupt_ = true;
                     serializeCurrentTime();
+                    setRegisterAddress(TIME_REGISTER_START);
                     comm_.transmit(comm_.getTxBuffer(), TIME_REGISTER_LENGTH);
                     state_ = State::Running;
                     return true;
@@ -180,6 +184,7 @@ public:
                     alarm1_update_request_ = false;
                     alarm1_update_waiting_for_interrupt_ = true;
                     serializeAlarm1();
+                    setRegisterAddress(ALARM1_START_ADDRESS);
                     comm_.transmit(comm_.getTxBuffer(), ALARM1_LENGTH);
                     state_ = State::Running;
                     return true;
@@ -189,6 +194,7 @@ public:
                     alarm2_update_request_ = false;
                     alarm2_update_waiting_for_interrupt_ = true;
                     serializeAlarm2();
+                    setRegisterAddress(ALARM2_START_ADDRESS);
                     comm_.transmit(comm_.getTxBuffer(), ALARM2_LENGTH);
                     state_ = State::Running;
                     return true;
@@ -197,6 +203,7 @@ public:
                 if (alarm1_read_request_) {
                     alarm1_read_request_ = false;
                     alarm1_read_in_progress_ = true;
+                    setRegisterAddress(ALARM1_START_ADDRESS);
                     comm_.receive(comm_.getRxBuffer(), ALARM1_LENGTH);
                     state_ = State::Running;
                     return true;
@@ -205,6 +212,7 @@ public:
                 if (alarm2_read_request_) {
                     alarm2_read_request_ = false;
                     alarm2_read_in_progress_ = true;
+                    setRegisterAddress(ALARM2_START_ADDRESS);
                     comm_.receive(comm_.getRxBuffer(), ALARM2_LENGTH);
                     state_ = State::Running;
                     return true;
@@ -219,6 +227,7 @@ public:
                     // Read current time at specified period (unless paused)
                     if (!time_read_paused_ && (tick_timer_ % TIME_READ_PERIOD_MS == 0)) {
                         time_read_in_progress_ = true;
+                        setRegisterAddress(TIME_REGISTER_START);
                         comm_.receive(comm_.getRxBuffer(), TIME_REGISTER_LENGTH);
                         state_ = State::Running;
                     }
@@ -226,6 +235,7 @@ public:
                     // Read status registers at specified period (offset by 50ms to avoid collision)
                     if ((tick_timer_ + 50) % STATUS_READ_PERIOD_MS == 0) {
                         status_read_in_progress_ = true;
+                        setRegisterAddress(STATUS_START_ADDRESS);
                         comm_.receive(comm_.getRxBuffer(), STATUS_REGISTER_LENGTH);
                         state_ = State::Running;
                     }
@@ -720,6 +730,16 @@ private:
 
         // Temperature registers (0x11-0x12) - MSB first, then LSB
         temp_ = (rx_buffer[3] << 8) | rx_buffer[4];
+    }
+
+    /**
+     * @brief Set I2C register address for next operation
+     * @param address Register address to access
+     */
+    void setRegisterAddress(uint8_t address) {
+        // Cast to I2CInterface to access setMemoryAddress()
+        auto* i2c = static_cast<chipz::interfaces::I2CInterface*>(&comm_);
+        i2c->setMemoryAddress(address);
     }
 };
 

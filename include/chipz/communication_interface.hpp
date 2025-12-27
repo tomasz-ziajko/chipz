@@ -67,16 +67,28 @@ public:
     /**
      * @brief Get pointer to transmit buffer
      * @return Pointer to internal transmit buffer
+     *
+     * Note: Ensures minimum buffer size to prevent returning invalid pointers
      */
     uint8_t* getTxBuffer() {
+        // Ensure buffer has minimum size allocated (prevents nullptr from empty vector)
+        if (tx_buffer_.empty()) {
+            tx_buffer_.resize(32);  // Reasonable default size
+        }
         return tx_buffer_.data();
     }
 
     /**
      * @brief Get pointer to receive buffer
      * @return Pointer to internal receive buffer
+     *
+     * Note: Ensures minimum buffer size to prevent returning invalid pointers
      */
     uint8_t* getRxBuffer() {
+        // Ensure buffer has minimum size allocated (prevents nullptr from empty vector)
+        if (rx_buffer_.empty()) {
+            rx_buffer_.resize(32);  // Reasonable default size
+        }
         return rx_buffer_.data();
     }
 

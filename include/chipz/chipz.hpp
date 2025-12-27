@@ -11,6 +11,7 @@
 #include "devices/ds3231.hpp"
 #include "devices/hd44780.hpp"
 #include "devices/max6675.hpp"
+#include "devices/pcf8574.hpp"
 #include "devices/tja1145.hpp"
 #include "devices/mcp795w.hpp"
 
