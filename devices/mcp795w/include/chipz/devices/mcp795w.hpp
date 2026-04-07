@@ -1,8 +1,8 @@
 #ifndef CHIPZ_DEVICES_MCP795W_HPP
 #define CHIPZ_DEVICES_MCP795W_HPP
 
-#include "../peripheral.hpp"
-#include "../interfaces/spi_interface.hpp"
+#include <chipz/peripheral.hpp>
+#include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <ctime>
 #include <functional>

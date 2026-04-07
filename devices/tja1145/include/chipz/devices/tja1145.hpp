@@ -1,8 +1,8 @@
 #ifndef CHIPZ_DEVICES_TJA1145_HPP
 #define CHIPZ_DEVICES_TJA1145_HPP
 
-#include "../peripheral.hpp"
-#include "../interfaces/spi_interface.hpp"
+#include <chipz/peripheral.hpp>
+#include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <functional>
 

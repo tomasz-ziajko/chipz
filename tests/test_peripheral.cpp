@@ -5,7 +5,7 @@
 using namespace chipz;
 
 // Concrete implementation of Peripheral for testing
-class TestPeripheral : public Peripheral {
+class TestPeripheral : public PeripheralBase {
 public:
     TestPeripheral() : status_(Status::Uninitialized), initResult_(true) {}
 
@@ -54,27 +54,27 @@ protected:
 };
 
 TEST_F(PeripheralTest, InitialStateIsUninitialized) {
-    EXPECT_EQ(peripheral.getStatus(), Peripheral::Status::Uninitialized);
+    EXPECT_EQ(peripheral.getStatus(), PeripheralBase::Status::Uninitialized);
     EXPECT_FALSE(peripheral.isReady());
 }
 
 TEST_F(PeripheralTest, SuccessfulInitializationSetsReady) {
     EXPECT_TRUE(peripheral.initialize());
-    EXPECT_EQ(peripheral.getStatus(), Peripheral::Status::Ready);
+    EXPECT_EQ(peripheral.getStatus(), PeripheralBase::Status::Ready);
     EXPECT_TRUE(peripheral.isReady());
 }
 
 TEST_F(PeripheralTest, FailedInitializationSetsError) {
     peripheral.setInitResult(false);
     EXPECT_FALSE(peripheral.initialize());
-    EXPECT_EQ(peripheral.getStatus(), Peripheral::Status::Error);
+    EXPECT_EQ(peripheral.getStatus(), PeripheralBase::Status::Error);
     EXPECT_FALSE(peripheral.isReady());
 }
 
 TEST_F(PeripheralTest, ResetSetsDeviceToReady) {
-    peripheral.setStatus(Peripheral::Status::Error);
+    peripheral.setStatus(PeripheralBase::Status::Error);
     EXPECT_TRUE(peripheral.reset());
-    EXPECT_EQ(peripheral.getStatus(), Peripheral::Status::Ready);
+    EXPECT_EQ(peripheral.getStatus(), PeripheralBase::Status::Ready);
     EXPECT_TRUE(peripheral.isReady());
 }
 
@@ -83,11 +83,11 @@ TEST_F(PeripheralTest, GetDeviceIdReturnsCorrectString) {
 }
 
 TEST_F(PeripheralTest, IsReadyReturnsFalseWhenBusy) {
-    peripheral.setStatus(Peripheral::Status::Busy);
+    peripheral.setStatus(PeripheralBase::Status::Busy);
     EXPECT_FALSE(peripheral.isReady());
 }
 
 TEST_F(PeripheralTest, IsReadyReturnsFalseWhenDisconnected) {
-    peripheral.setStatus(Peripheral::Status::Disconnected);
+    peripheral.setStatus(PeripheralBase::Status::Disconnected);
     EXPECT_FALSE(peripheral.isReady());
 }

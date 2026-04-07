@@ -1,27 +1,15 @@
-# Test configuration for chipz
-
-# Include Google Test
-include(GoogleTest)
-
-# Test sources
-set(TEST_SOURCES
+# Combined test binary — all device tests in one executable alongside core tests
+add_executable(chipz_tests
     test_peripheral.cpp
-    test_ds3231.cpp
-    test_hd44780.cpp
-    test_max6675.cpp
+    ${CMAKE_SOURCE_DIR}/devices/ds3231/test_ds3231.cpp
+    ${CMAKE_SOURCE_DIR}/devices/max6675/test_max6675.cpp
+    ${CMAKE_SOURCE_DIR}/devices/hd44780/test_hd44780.cpp
 )
-
-# Create test executable
-add_executable(chipz_tests ${TEST_SOURCES})
-
-# Link against chipz and Google Test
-target_link_libraries(chipz_tests
-    PRIVATE
-        chipz::chipz
-        GTest::gtest
-        GTest::gtest_main
-        GTest::gmock
+target_link_libraries(chipz_tests PRIVATE
+    chipz::chipz
+    chipz_test_support
+    GTest::gtest
+    GTest::gtest_main
+    GTest::gmock
 )
-
-# Discover tests
 gtest_discover_tests(chipz_tests)

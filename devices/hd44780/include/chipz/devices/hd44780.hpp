@@ -1,8 +1,8 @@
 #ifndef CHIPZ_DEVICES_HD44780_HPP
 #define CHIPZ_DEVICES_HD44780_HPP
 
-#include "../peripheral.hpp"
-#include "../concepts.hpp"
+#include <chipz/peripheral.hpp>
+#include <chipz/concepts.hpp>
 #include <cstdint>
 #include <string>
 #include <functional>
@@ -55,7 +55,7 @@ public:
             std::function<void(uint8_t d4_d7, bool rs, bool e)> update_pins = nullptr)
         : Peripheral<CommInterface>(comm)
         , config_(config)
-        , status_(Status::Uninitialized)
+        , status_(PeripheralBase::Status::Uninitialized)
         , state_(State::Uninit)
         , transfer_state_(TransferState::Idle)
         , tick_timer_(0)
@@ -101,8 +101,8 @@ public:
 
     // Peripheral interface implementation
     bool initialize() override {
-        if (!comm_.isReady()) {
-            status_ = Status::Error;
+        if (!this->comm_.isReady()) {
+            status_ = PeripheralBase::Status::Error;
             return false;
         }
 
@@ -130,20 +130,20 @@ public:
             last_tick_ = get_tick_();
         }
 
-        status_ = Status::Ready;
+        status_ = PeripheralBase::Status::Ready;
         return true;
     }
 
     bool reset() override {
-        status_ = Status::Uninitialized;
+        status_ = PeripheralBase::Status::Uninitialized;
         return initialize();
     }
 
     bool isReady() const override {
-        return status_ == Status::Ready && comm_.isReady() && state_ == State::Idle;
+        return status_ == PeripheralBase::Status::Ready && this->comm_.isReady() && state_ == State::Idle;
     }
 
-    Status getStatus() const override {
+    PeripheralBase::Status getStatus() const override {
         return status_;
     }
 
@@ -152,7 +152,7 @@ public:
     }
 
     bool main() override {
-        if (status_ != Status::Ready) {
+        if (status_ != PeripheralBase::Status::Ready) {
             return false;
         }
 
@@ -290,7 +290,7 @@ private:
     };
 
     Config config_;
-    Status status_;
+    PeripheralBase::Status status_;
     State state_;
     TransferState transfer_state_;
 
@@ -378,7 +378,7 @@ private:
      */
     void onTransferComplete(bool success) override {
         if (!success) {
-            status_ = Status::Error;
+            status_ = PeripheralBase::Status::Error;
             state_ = State::Idle;
             return;
         }

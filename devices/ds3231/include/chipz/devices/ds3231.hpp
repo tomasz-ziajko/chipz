@@ -1,8 +1,8 @@
 #ifndef CHIPZ_DEVICES_DS3231_HPP
 #define CHIPZ_DEVICES_DS3231_HPP
 
-#include "../peripheral.hpp"
-#include "../interfaces/i2c_interface.hpp"
+#include <chipz/peripheral.hpp>
+#include <chipz/interfaces/i2c_interface.hpp>
 #include <cstdint>
 #include <ctime>
 #include <array>
