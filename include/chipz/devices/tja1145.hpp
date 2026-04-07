@@ -2,6 +2,7 @@
 #define CHIPZ_DEVICES_TJA1145_HPP
 
 #include "../peripheral.hpp"
+#include "../interfaces/spi_interface.hpp"
 #include <cstdint>
 #include <functional>
 
@@ -19,8 +20,7 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically SPI)
  */
-template<typename CommInterface>
-class TJA1145 : public Peripheral {
+class TJA1145 : public Peripheral<interfaces::SPIInterface> {
 public:
     enum class State {
         Off,
@@ -42,10 +42,10 @@ public:
      * @param config Configuration parameters
      * @param get_spi_transmission_disabled Function to check if SPI transmission is disabled
      */
-    TJA1145(CommInterface& comm,
+    TJA1145(interfaces::SPIInterface& comm,
             const Config& config,
             std::function<uint8_t()> get_spi_transmission_disabled = nullptr)
-        : comm_(comm)
+        : Peripheral<interfaces::SPIInterface>(comm)
         , status_(Status::Uninitialized)
         , state_(State::Standby)
         , config_(config)
@@ -278,7 +278,6 @@ public:
     }
 
 private:
-    CommInterface& comm_;
     Status status_;
     State state_;
     Config config_;

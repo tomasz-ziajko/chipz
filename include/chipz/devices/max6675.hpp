@@ -2,6 +2,7 @@
 #define CHIPZ_DEVICES_MAX6675_HPP
 
 #include "../peripheral.hpp"
+#include "../interfaces/spi_interface.hpp"
 #include <cstdint>
 #include <functional>
 
@@ -24,16 +25,15 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically SPI)
  */
-template<typename CommInterface>
-class MAX6675 : public Peripheral {
+class MAX6675 : public Peripheral<interfaces::SPIInterface> {
 public:
     /**
      * @brief Construct MAX6675 driver with communication interface
      * @param comm Reference to communication interface (SPI)
      * @param get_tick Function to get current system tick in milliseconds
      */
-    MAX6675(CommInterface& comm, std::function<uint32_t()> get_tick = nullptr)
-        : comm_(comm)
+    MAX6675(interfaces::SPIInterface& comm, std::function<uint32_t()> get_tick = nullptr)
+        : Peripheral<interfaces::SPIInterface>(comm)
         , status_(Status::Uninitialized)
         , temperature_(0)
         , tick_timer_(0)
@@ -157,7 +157,6 @@ public:
     }
 
 private:
-    CommInterface& comm_;
     Status status_;
 
     // Temperature data

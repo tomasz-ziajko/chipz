@@ -2,6 +2,7 @@
 #define CHIPZ_DEVICES_MCP795W_HPP
 
 #include "../peripheral.hpp"
+#include "../interfaces/spi_interface.hpp"
 #include <cstdint>
 #include <ctime>
 #include <functional>
@@ -22,17 +23,16 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically SPI)
  */
-template<typename CommInterface>
-class MCP795W : public Peripheral {
+class MCP795W : public Peripheral<interfaces::SPIInterface> {
 public:
     /**
      * @brief Construct MCP795W driver with communication interface
      * @param comm Reference to communication interface (SPI)
      * @param get_spi_transmission_disabled Function to check if SPI transmission is disabled
      */
-    MCP795W(CommInterface& comm,
+    MCP795W(interfaces::SPIInterface& comm,
             std::function<uint8_t()> get_spi_transmission_disabled = nullptr)
-        : comm_(comm)
+        : Peripheral<interfaces::SPIInterface>(comm)
         , status_(Status::Uninitialized)
         , current_time_{}
         , alarm_time_{}
@@ -234,7 +234,6 @@ public:
     }
 
 private:
-    CommInterface& comm_;
     Status status_;
 
     std::tm current_time_;

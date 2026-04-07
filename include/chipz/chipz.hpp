@@ -6,6 +6,7 @@
 
 #include "peripheral.hpp"
 #include "communication_interface.hpp"
+#include "concepts.hpp"
 #include "interfaces/i2c_interface.hpp"
 #include "interfaces/spi_interface.hpp"
 #include "devices/ds3231.hpp"

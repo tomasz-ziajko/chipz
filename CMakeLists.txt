@@ -7,7 +7,7 @@ project(chipz
 )
 
 # Specify C++ standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -25,7 +25,7 @@ target_include_directories(chipz INTERFACE
 )
 
 # Require C++17
-target_compile_features(chipz INTERFACE cxx_std_17)
+target_compile_features(chipz INTERFACE cxx_std_20)
 
 # Add alias for use with add_subdirectory
 add_library(chipz::chipz ALIAS chipz)

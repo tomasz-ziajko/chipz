@@ -2,6 +2,7 @@
 #define CHIPZ_DEVICES_DS3231_HPP
 
 #include "../peripheral.hpp"
+#include "../interfaces/i2c_interface.hpp"
 #include <cstdint>
 #include <ctime>
 #include <array>
@@ -22,8 +23,7 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically I2C)
  */
-template<typename CommInterface>
-class DS3231 : public Peripheral {
+class DS3231 : public Peripheral<interfaces::I2CInterface> {
 public:
     struct Temperature {
         int8_t integer;
@@ -49,8 +49,8 @@ public:
      * @param comm Reference to communication interface (I2C)
      * @param get_tick Function to get current system tick in milliseconds
      */
-    DS3231(CommInterface& comm, std::function<uint32_t()> get_tick = nullptr)
-        : comm_(comm)
+    DS3231(interfaces::I2CInterface& comm, std::function<uint32_t()> get_tick = nullptr)
+        : Peripheral<interfaces::I2CInterface>(comm)
         , status_(Status::Uninitialized)
         , state_(State::PreInit)
         , current_time_{}
@@ -444,7 +444,6 @@ private:
         Running       // Active transmission in progress
     };
 
-    CommInterface& comm_;
     Status status_;
     State state_;
     std::tm current_time_;

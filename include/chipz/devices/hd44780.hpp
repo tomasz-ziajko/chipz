@@ -2,6 +2,7 @@
 #define CHIPZ_DEVICES_HD44780_HPP
 
 #include "../peripheral.hpp"
+#include "../concepts.hpp"
 #include <cstdint>
 #include <string>
 #include <functional>
@@ -20,8 +21,8 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically GPIO)
  */
-template<typename CommInterface>
-class HD44780 : public Peripheral {
+template<chipz::concepts::CommunicationInterface CommInterface>
+class HD44780 : public Peripheral<CommInterface> {
 public:
     enum class InterfaceMode {
         Bit4,
@@ -52,7 +53,7 @@ public:
             const Config& config,
             std::function<uint32_t()> get_tick = nullptr,
             std::function<void(uint8_t d4_d7, bool rs, bool e)> update_pins = nullptr)
-        : comm_(comm)
+        : Peripheral<CommInterface>(comm)
         , config_(config)
         , status_(Status::Uninitialized)
         , state_(State::Uninit)
@@ -293,7 +294,6 @@ private:
         SingleNibbleELow
     };
 
-    CommInterface& comm_;
     Config config_;
     Status status_;
     State state_;
