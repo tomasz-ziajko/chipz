@@ -67,10 +67,6 @@ public:
         , clear_wake_up_pin_event_request_(false)
         , get_spi_transmission_disabled_(get_spi_transmission_disabled)
     {
-        // Set up SPI completion callback
-        comm_.setTransferCompleteCallback(
-            [this](bool success) { this->onTransferComplete(success); }
-        );
     }
 
     // Peripheral interface implementation
@@ -329,7 +325,7 @@ private:
      * @brief SPI transfer completion callback
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) {
+    void onTransferComplete(bool success) override {
         if (!success) {
             status_ = Status::Error;
             return;
@@ -378,7 +374,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_MODE_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = MODE_NORMAL;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -389,7 +385,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_MODE_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = MODE_SLEEP;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -400,7 +396,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_MODE_CONTROL << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -411,7 +407,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_SYSTEM_EVENT_STATUS << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -422,7 +418,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_TRANSCEIVER_EVENT_STATUS << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -432,7 +428,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_DATA_RATE << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -442,7 +438,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_CAN_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0b00110001;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -457,7 +453,7 @@ private:
             tx_buffer[0] = (0x4C << 1) & (~READ_ONLY_BIT);
         }
         tx_buffer[1] = 0b00000001;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -467,7 +463,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_FRAME_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0x80;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -477,7 +473,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_SYSTEM_EVENT_STATUS << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0x16;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 
     /**
@@ -487,7 +483,7 @@ private:
         uint8_t* tx_buffer = comm_.getTxBuffer();
         tx_buffer[0] = (REGISTER_TRANSCEIVER_EVENT_STATUS << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0x33;
-        comm_.transmit(tx_buffer, 2);
+        this->transmit(tx_buffer, 2);
     }
 };
 

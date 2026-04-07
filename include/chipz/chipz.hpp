@@ -5,6 +5,8 @@
 // Include this to get access to all chipz functionality
 
 #include "peripheral.hpp"
+#include "timer_interface.hpp"
+#include "core.hpp"
 #include "communication_interface.hpp"
 #include "concepts.hpp"
 #include "interfaces/i2c_interface.hpp"

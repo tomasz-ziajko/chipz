@@ -83,10 +83,6 @@ public:
         , temp_(0)
         , get_tick_(get_tick)
     {
-        // Set up I2C completion callback
-        comm_.setTransferCompleteCallback(
-            [this](bool success) { this->onTransferComplete(success); }
-        );
     }
 
     // Peripheral interface implementation
@@ -117,7 +113,7 @@ public:
         }
 
         // Start in PREINIT state - query status register to check oscillator state
-        if (!comm_.receive(comm_.getRxBuffer(), STATUS_REGISTER_LENGTH)) {
+        if (!this->receive(comm_.getRxBuffer(), STATUS_REGISTER_LENGTH)) {
             status_ = Status::Error;
             return false;
         }
@@ -160,7 +156,7 @@ public:
                 // OSF must be explicitly cleared by writing 0 to bit 7
                 comm_.getTxBuffer()[0] = control_;
                 comm_.getTxBuffer()[1] = control_status_ & 0x7F; // Clear OSF bit (bit 7)
-                comm_.transmit(comm_.getTxBuffer(), 2);
+                this->transmit(comm_.getTxBuffer(), 2);
                 osf_clear_pending_ = true;
                 // Stay in CLEARING_OSF state (transition to IDLE happens in callback)
                 break;
@@ -171,7 +167,7 @@ public:
                     time_update_request_ = false;
                     time_update_waiting_for_interrupt_ = true;
                     serializeCurrentTime();
-                    comm_.transmit(comm_.getTxBuffer(), TIME_REGISTER_LENGTH);
+                    this->transmit(comm_.getTxBuffer(), TIME_REGISTER_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -180,7 +176,7 @@ public:
                     alarm1_update_request_ = false;
                     alarm1_update_waiting_for_interrupt_ = true;
                     serializeAlarm1();
-                    comm_.transmit(comm_.getTxBuffer(), ALARM1_LENGTH);
+                    this->transmit(comm_.getTxBuffer(), ALARM1_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -189,7 +185,7 @@ public:
                     alarm2_update_request_ = false;
                     alarm2_update_waiting_for_interrupt_ = true;
                     serializeAlarm2();
-                    comm_.transmit(comm_.getTxBuffer(), ALARM2_LENGTH);
+                    this->transmit(comm_.getTxBuffer(), ALARM2_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -197,7 +193,7 @@ public:
                 if (alarm1_read_request_) {
                     alarm1_read_request_ = false;
                     alarm1_read_in_progress_ = true;
-                    comm_.receive(comm_.getRxBuffer(), ALARM1_LENGTH);
+                    this->receive(comm_.getRxBuffer(), ALARM1_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -205,7 +201,7 @@ public:
                 if (alarm2_read_request_) {
                     alarm2_read_request_ = false;
                     alarm2_read_in_progress_ = true;
-                    comm_.receive(comm_.getRxBuffer(), ALARM2_LENGTH);
+                    this->receive(comm_.getRxBuffer(), ALARM2_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -219,14 +215,14 @@ public:
                     // Read current time at specified period (unless paused)
                     if (!time_read_paused_ && (tick_timer_ % TIME_READ_PERIOD_MS == 0)) {
                         time_read_in_progress_ = true;
-                        comm_.receive(comm_.getRxBuffer(), TIME_REGISTER_LENGTH);
+                        this->receive(comm_.getRxBuffer(), TIME_REGISTER_LENGTH);
                         state_ = State::Running;
                     }
 
                     // Read status registers at specified period (offset by 50ms to avoid collision)
                     if ((tick_timer_ + 50) % STATUS_READ_PERIOD_MS == 0) {
                         status_read_in_progress_ = true;
-                        comm_.receive(comm_.getRxBuffer(), STATUS_REGISTER_LENGTH);
+                        this->receive(comm_.getRxBuffer(), STATUS_REGISTER_LENGTH);
                         state_ = State::Running;
                     }
 
@@ -514,10 +510,10 @@ private:
     static constexpr uint32_t TIMER_MAX_MS = 1000;
 
     /**
-     * @brief I2C transfer completion callback (equivalent to ds3231_interrupt)
+     * @brief Called by Core when a transfer-complete interrupt is routed here
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) {
+    void onTransferComplete(bool success) override {
         if (!success) {
             status_ = Status::Error;
             state_ = State::Idle;

@@ -342,6 +342,10 @@ In summary, you are free to use, modify, and distribute this software, but you m
 
 Contributions are welcome! Please follow the existing code style and architecture patterns.
 
+## Known Issues / TODO
+
+- **Shared bus contention**: When two peripherals sharing a comm interface (e.g. same SPI bus) are both scheduled in the same `Core::service()` cycle, the second peripheral's `this->transmit()` will return an error because the bus is already claimed. Drivers currently handle this by returning from `main()` early and retrying next cycle. A future improvement could add bus-level queuing inside Core so the second peripheral's transfer is automatically deferred without driver-level handling.
+
 ## Status
 
 This library is in early development. The current drivers are mockups and do not contain actual hardware implementation yet.

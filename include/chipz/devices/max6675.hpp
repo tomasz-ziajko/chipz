@@ -42,10 +42,6 @@ public:
         , transfer_in_progress_(false)
         , get_tick_(get_tick)
     {
-        // Set up SPI completion callback
-        comm_.setTransferCompleteCallback(
-            [this](bool success) { this->onTransferComplete(success); }
-        );
     }
 
     // Peripheral interface implementation
@@ -112,7 +108,7 @@ public:
             transfer_in_progress_ = true;
 
             // Start SPI transfer (read 2 bytes)
-            if (!comm_.receive(comm_.getRxBuffer(), SPI_TRANSFER_LENGTH)) {
+            if (!this->receive(comm_.getRxBuffer(), SPI_TRANSFER_LENGTH)) {
                 transfer_in_progress_ = false;
                 status_ = Status::Error;
                 return false;
@@ -179,7 +175,7 @@ private:
      * @brief SPI transfer completion callback
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) {
+    void onTransferComplete(bool success) override {
         transfer_in_progress_ = false;
 
         if (!success) {

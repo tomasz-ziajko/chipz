@@ -47,10 +47,6 @@ public:
         , shutdown_allowed_(false)
         , get_spi_transmission_disabled_(get_spi_transmission_disabled)
     {
-        // Set up SPI completion callback
-        comm_.setTransferCompleteCallback(
-            [this](bool success) { this->onTransferComplete(success); }
-        );
     }
 
     // Peripheral interface implementation
@@ -281,7 +277,7 @@ private:
      * @brief SPI transfer completion callback
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) {
+    void onTransferComplete(bool success) override {
         if (!success) {
             status_ = Status::Error;
             return;
@@ -360,7 +356,7 @@ private:
         // Control register - Enable ALARM 0
         tx_buffer[10] = 0x10;
 
-        comm_.transmit(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
+        this->transmit(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
     }
 
     /**
@@ -372,7 +368,7 @@ private:
         tx_buffer[0] = OPCODE_READ;
         tx_buffer[1] = TIME_AND_DATE_START_ADDRESS;
 
-        comm_.transmit(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
+        this->transmit(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
     }
 
     /**
@@ -462,7 +458,7 @@ private:
         tx_buffer[7] = ((tx_buffer[7] << 4) & 0x10);
         tx_buffer[7] |= ((month % 10) & 0x0F);
 
-        comm_.transmit(tx_buffer, ALARM0_SEND_TRANSMISSION_LENGTH);
+        this->transmit(tx_buffer, ALARM0_SEND_TRANSMISSION_LENGTH);
     }
 };
 

@@ -78,7 +78,6 @@ public:
         , get_tick_(get_tick)
         , update_pins_(update_pins)
     {
-        // Get rows and columns from config
         switch (config_.size) {
             case DisplaySize::Size16x2:
                 rows_ = 2;
@@ -98,10 +97,6 @@ public:
                 break;
         }
 
-        // Set up GPIO completion callback
-        comm_.setTransferCompleteCallback(
-            [this](bool success) { this->onTransferComplete(success); }
-        );
     }
 
     // Peripheral interface implementation
@@ -378,10 +373,10 @@ private:
     static constexpr uint8_t ROW4_ADDR = 0x54;
 
     /**
-     * @brief GPIO transfer completion callback
+     * @brief Called by Core when a transfer-complete interrupt is routed here
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) {
+    void onTransferComplete(bool success) override {
         if (!success) {
             status_ = Status::Error;
             state_ = State::Idle;
