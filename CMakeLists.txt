@@ -10,7 +10,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-option(CHIPZ_BUILD_EXAMPLES "Build chipz examples" ON)
 option(CHIPZ_BUILD_TESTS "Build chipz tests" OFF)
 
 # Core infrastructure (peripheral base, interfaces, concepts, scheduler)
@@ -77,10 +76,6 @@ target_link_libraries(chipz_all INTERFACE
     chipz::hd44780
 )
 add_library(chipz::chipz ALIAS chipz_all)
-
-if(CHIPZ_BUILD_EXAMPLES)
-    add_subdirectory(examples)
-endif()
 
 if(CHIPZ_BUILD_TESTS)
     add_subdirectory(tests)
