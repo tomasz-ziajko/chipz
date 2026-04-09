@@ -1,10 +1,16 @@
+// Copyright (c) 2026 Tomasz Ziajko
+// SPDX-License-Identifier: GPL-3.0-only
+// Commercial license available — see README
+
 #ifndef CHIPZ_PERIPHERAL_HPP
 #define CHIPZ_PERIPHERAL_HPP
 
 #include "communication_interface.hpp"
 #include "concepts.hpp"
+#include "isr_source.hpp"
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -80,13 +86,41 @@ public:
      * communication interface. Peripheral<CommInterface> overrides this and
      * dispatches to onTransferComplete / onError / onArbitrationLost.
      *
-     * @param type   Type of interrupt that fired
+     * @param type    Type of interrupt that fired
      * @param success True for TransferComplete with no error
      */
     virtual void onInterrupt(CommunicationInterface::InterruptType type, bool success) {
         (void)type;
         (void)success;
     }
+
+    /**
+     * @brief Declare which non-communication ISR sources this peripheral needs
+     *
+     * Called by Core::add() to populate the ISR dispatch table. Return a
+     * span over a static constexpr array — no heap allocation.
+     *
+     * Example (DS3231 with an alarm pin on EXTI3):
+     * @code
+     *   static constexpr ISRSource kISRs[] = { ISRSource::EXTI3 };
+     *   std::span<const ISRSource> requiredISRs() const noexcept override {
+     *       return kISRs;
+     *   }
+     * @endcode
+     *
+     * @return View over the ISR sources required by this peripheral
+     */
+    virtual std::span<const ISRSource> requiredISRs() const noexcept { return {}; }
+
+    /**
+     * @brief Handle a routed non-communication hardware interrupt
+     *
+     * Called by Core::service() pass 1 when an ISR source declared in
+     * requiredISRs() fires. Runs in main-loop context — never in ISR context.
+     *
+     * @param source The ISRSource that fired
+     */
+    virtual void onISR(ISRSource source) noexcept { (void)source; }
 
     // -------------------------------------------------------------------------
     // Callback injection — called by Core::add()
@@ -242,6 +276,7 @@ public:
 
 protected:
     CommInterface& comm_;
+    CommunicationInterface::ConnectionId conn_id_{CommunicationInterface::kInvalidConnection};
 
     explicit Peripheral(CommInterface& comm) : comm_(comm) {}
 
@@ -256,9 +291,23 @@ protected:
      * @param length Number of bytes
      * @return true if transmission started, false if bus busy or error
      */
+    /**
+     * @brief Register this peripheral's connection with its communication interface
+     *
+     * Call from initialize() with the ConnectionId returned by the interface's
+     * registerConnection() method. From that point, selectConnection() is
+     * called automatically before every transmit() and receive().
+     */
+    void setConnection(CommunicationInterface::ConnectionId id) {
+        conn_id_ = id;
+    }
+
     bool transmit(const uint8_t* data, size_t length) {
         if (!comm_.isReady()) {
             return false;
+        }
+        if (conn_id_ != CommunicationInterface::kInvalidConnection) {
+            comm_.selectConnection(conn_id_);
         }
         if (claim_bus_fn_) {
             claim_bus_fn_();
@@ -278,6 +327,9 @@ protected:
     bool receive(uint8_t* buffer, size_t length) {
         if (!comm_.isReady()) {
             return false;
+        }
+        if (conn_id_ != CommunicationInterface::kInvalidConnection) {
+            comm_.selectConnection(conn_id_);
         }
         if (claim_bus_fn_) {
             claim_bus_fn_();

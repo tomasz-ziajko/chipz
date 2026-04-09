@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Tomasz Ziajko
+// SPDX-License-Identifier: GPL-3.0-only
+// Commercial license available — see README
+
 #ifndef CHIPZ_DEVICES_DS3231_HPP
 #define CHIPZ_DEVICES_DS3231_HPP
 
@@ -56,6 +60,7 @@ public:
         , current_time_{}
         , tick_timer_(0)
         , last_tick_(0)
+        , get_tick_(get_tick)
         , time_update_request_(false)
         , time_update_waiting_for_interrupt_(false)
         , alarm1_update_request_(false)
@@ -81,7 +86,6 @@ public:
         , control_status_(0)
         , aging_offset_(0)
         , temp_(0)
-        , get_tick_(get_tick)
     {
     }
 
@@ -91,6 +95,8 @@ public:
             status_ = Status::Error;
             return false;
         }
+
+        setConnection(comm_.registerConnection(I2C_ADDRESS));
 
         // Reset state machine
         state_ = State::PreInit;

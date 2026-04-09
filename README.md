@@ -1,351 +1,226 @@
 # chipz
 
-A modern C++17 header-only library for embedded chip drivers, designed to provide a clean and consistent interface for interacting with various peripheral devices.
+A C++20 header-only library of interrupt-driven embedded peripheral drivers. chipz provides a unified scheduling and communication framework so drivers run without polling — all execution is triggered by hardware interrupts and dispatched from a main-loop service call.
 
 ## Overview
 
-chipz provides a unified framework for working with embedded chips and peripherals. Similar to how Boost extends the C++ standard library, chipz aims to enhance embedded development with well-designed, reusable driver implementations.
+chipz separates three concerns:
 
-## Features
+- **`Core`** — scheduler and ISR router. Registered peripherals are called only when due or when a hardware interrupt fires on their bus.
+- **`Peripheral<T>`** — base class for device drivers. Drivers implement `main()` and call `defer_ms()` / `defer_us()` to control their own scheduling rate.
+- **Communication interfaces** (`I2CInterface`, `SPIInterface`) — thin wrappers around HAL IT functions. One instance per physical bus; multiple peripherals may share the same instance.
 
-- **Header-only library** - Easy integration, no compilation required
-- **Unified interface** - All drivers inherit from a common `Peripheral` base class
-- **Type-safe** - Leverages modern C++17 features
-- **Zero dependencies** - Pure C++ implementation
-- **CMake support** - Easy integration into existing projects
+Execution model:
+1. Hardware ISRs set atomic flags only — no driver code runs in interrupt context.
+2. `Core::service()` (called from the main loop) processes pending flags in two passes: comm interrupts first, then scheduled `main()` calls in priority order.
 
 ## Supported Devices
 
-Currently includes mockup drivers for:
-
-- **DS3231** - High-precision I2C Real-Time Clock with temperature sensor
-- **HD44780** - Character LCD controller (4-bit and 8-bit modes)
-- **MAX6675** - K-type thermocouple-to-digital converter (SPI)
+| Device    | Bus  | Description                              |
+|-----------|------|------------------------------------------|
+| DS3231    | I2C  | High-accuracy RTC with temperature sensor |
+| MAX6675   | SPI  | K-type thermocouple-to-digital converter  |
+| MCP795W   | SPI  | RTC with SRAM and battery switchover      |
+| TJA1145   | SPI  | Automotive CAN transceiver                |
+| HD44780   | GPIO/SPI | Character LCD controller             |
 
 ## Requirements
 
-- C++17 compatible compiler (GCC 7+, Clang 5+, MSVC 2017+)
-- CMake 3.14+ (for building examples and tests)
-- Git (for fetching Google Test when building tests)
+- C++20 compiler (GCC 10+, Clang 12+)
+- CMake 3.23+
+- A platform timer implementation (see `TimerInterface`)
+- For STM32: STM32 HAL (CubeMX-generated init code)
 
-## Quick Start
+## Integrating chipz
 
-### Using CMake (Recommended)
-
-1. Add chipz to your project:
+### 1. Add the library
 
 ```cmake
 add_subdirectory(path/to/chipz)
-target_link_libraries(your_target PRIVATE chipz::chipz)
 ```
 
-2. Include in your code:
+### 2. Register devices and generate ISR handlers
+
+Use the `chipz_add_<device>()` functions to link each device and record its ISR requirements. Then call `chipz_generate_isrs()` once to emit a single `chipz_isr_handlers.cpp` containing all peripheral vector handlers and HAL weak-callback overrides.
+
+```cmake
+chipz_add_ds3231(TARGET my_app
+    I2C_INSTANCE I2C1
+    I2C_HANDLE   hi2c1
+    I2C_IFACE    g_i2c1)
+
+chipz_add_max6675(TARGET my_app
+    SPI_INSTANCE SPI2
+    SPI_HANDLE   hspi2
+    SPI_IFACE    g_spi2)
+
+chipz_generate_isrs(TARGET      my_app
+                    CORE        g_core
+                    HAL_INCLUDE "stm32h5xx_hal.h")
+```
+
+Optional parameters:
+- `chipz_add_ds3231`: `ALARM_EXTI <pin>` — EXTI line for the INT# alarm pin
+- `chipz_add_tja1145`: `WAKE_EXTI <pin>`, `CAN_INSTANCE <CAN1>`, `CAN_HANDLE <hcan1>`
+- `chipz_add_mcp795w`: `ALARM_EXTI <pin>`
+- `chipz_add_hd44780`: `SPI_INSTANCE`, `SPI_HANDLE`, `SPI_IFACE` (only if using an SPI GPIO expander)
+
+### 3. Add port files and application source
+
+```cmake
+target_sources(my_app PRIVATE
+    path/to/chipz/port/stm32h5xx/config.cpp      # I2C/SPI interface objects
+    path/to/chipz/port/stm32h5xx/chipz_isrs.cpp  # exceptions, SysTick, EXTI
+    app.cpp
+)
+```
+
+### 4. Wire up in application code
 
 ```cpp
-#include <chipz/chipz.hpp>
+// app.cpp
+#include <chipz/core.hpp>
+#include <chipz/devices/ds3231.hpp>
+#include <chipz/devices/max6675.hpp>
+#include <chipz/interfaces/i2c_interface.hpp>
+#include <chipz/interfaces/spi_interface.hpp>
+#include "stm32h5xx_hal.h"
 
-int main() {
-    chipz::devices::DS3231 rtc;
+extern chipz::interfaces::I2CInterface g_i2c1;
+extern chipz::interfaces::SPIInterface g_spi2;
 
-    if (rtc.initialize()) {
-        // Use the device
-    }
+// Implement chipz::TimerInterface with your platform timer
+class SysTickTimer final : public chipz::TimerInterface { /* ... */ };
 
-    return 0;
+SysTickTimer g_systick_timer;
+chipz::Core  g_core{g_systick_timer};
+
+chipz::devices::DS3231  g_ds3231 {g_i2c1, []() -> uint32_t { return HAL_GetTick(); }};
+chipz::devices::MAX6675 g_max6675{g_spi2, []() -> uint32_t { return HAL_GetTick(); }};
+
+extern "C" void chipz_app_init() {
+    g_core.add(g_ds3231);
+    g_core.add(g_max6675);
+    g_core.initialize();
+}
+
+extern "C" void chipz_app_run() {
+    g_core.service();  // call from main loop
 }
 ```
 
-### Manual Integration
+## STM32H5xx Port
 
-Simply add the `include` directory to your compiler's include path:
+`port/stm32h5xx/` contains ready-to-compile files for the STM32H5xx family. They do not need modification.
 
-```bash
-g++ -std=c++17 -I/path/to/chipz/include your_code.cpp
-```
+| File             | Provides                                                         |
+|------------------|------------------------------------------------------------------|
+| `config.cpp`     | `g_i2c1`–`g_i2c4`, `g_spi1`–`g_spi3` interface objects wrapping HAL IT functions |
+| `chipz_isrs.cpp` | Cortex-M exception handlers, SysTick, EXTI0–EXTI15 handlers     |
 
-## Building the Library
+HAL handles that are not initialized in your project (e.g. `hi2c3` when only I2C1 is used) are declared `__attribute__((weak))` in `config.cpp`, so they resolve to null at link time without error.
 
-chipz is a header-only library, so there's nothing to build for the library itself. However, you can build the examples and tests.
-
-### Build Examples
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/chipz.git
-cd chipz
-
-# Create build directory
-mkdir build && cd build
-
-# Configure with CMake (examples enabled by default)
-cmake ..
-
-# Build examples
-make
-
-# Run an example
-./examples/basic_usage
-./examples/ds3231_example
-./examples/hd44780_example
-./examples/max6675_example
-```
-
-### Build and Run Tests
-
-Tests use Google Test and Google Mock, which are automatically downloaded during CMake configuration.
-
-```bash
-# From the chipz directory
-mkdir build && cd build
-
-# Configure with tests enabled
-cmake -DCHIPZ_BUILD_TESTS=ON ..
-
-# Build tests
-make
-
-# Run all tests
-ctest
-
-# Or run the test executable directly for detailed output
-./tests/chipz_tests
-
-# Run specific tests
-./tests/chipz_tests --gtest_filter=DS3231Test.*
-./tests/chipz_tests --gtest_filter=*Temperature*
-```
-
-### Build Options
-
-Configure the build with CMake options:
-
-```bash
-# Build everything (examples and tests)
-cmake -DCHIPZ_BUILD_EXAMPLES=ON -DCHIPZ_BUILD_TESTS=ON ..
-
-# Build only tests (no examples)
-cmake -DCHIPZ_BUILD_EXAMPLES=OFF -DCHIPZ_BUILD_TESTS=ON ..
-
-# Build only the library (no examples or tests)
-cmake -DCHIPZ_BUILD_EXAMPLES=OFF -DCHIPZ_BUILD_TESTS=OFF ..
-```
-
-### Installation
-
-Install chipz system-wide (or to a custom prefix):
-
-```bash
-# From the build directory
-cmake --install . --prefix /usr/local
-
-# Or with sudo for system-wide installation
-sudo cmake --install .
-```
-
-After installation, use in your CMake projects:
-
-```cmake
-find_package(chipz REQUIRED)
-target_link_libraries(your_target PRIVATE chipz::chipz)
-```
+The comm peripheral ISR handlers (e.g. `I2C1_EV_IRQHandler`, `HAL_I2C_MemRxCpltCallback`) are generated separately by `chipz_generate_isrs()` into `chipz_isr_handlers.cpp`.
 
 ## Architecture
 
-### Base Class: `Peripheral`
+### Core classes
 
-All device drivers inherit from the `chipz::Peripheral` base class, which provides:
+| Class | Role |
+|-------|------|
+| `chipz::Core` | Scheduler and ISR router. Registered via `add()`, driven via `service()`. |
+| `chipz::PeripheralBase` | Abstract base — `initialize()`, `main()`, `onInterrupt()`, `onISR()`, priority |
+| `chipz::Peripheral<T>` | Template middle layer — binds a driver to its comm interface, provides `transmit()` / `receive()` |
+| `chipz::TimerInterface` | Abstract one-shot timer — implement for your platform |
+| `chipz::CommunicationInterface` | Abstract comm contract — implemented by `I2CInterface` / `SPIInterface` |
 
-- `initialize()` - Initialize the device
-- `reset()` - Reset device to default state
-- `isReady()` - Check device readiness
-- `getStatus()` - Get current device status
-- `getDeviceId()` - Get device identifier string
-
-### Device-Specific Interfaces
-
-Each driver extends the base interface with device-specific functionality:
+### Writing a driver
 
 ```cpp
-// DS3231 RTC example
-chipz::devices::DS3231 rtc;
-rtc.initialize();
+#include <chipz/peripheral.hpp>
+#include <chipz/interfaces/spi_interface.hpp>
 
-chipz::devices::DS3231::DateTime dt;
-rtc.getDateTime(dt);
+class MyDevice : public chipz::Peripheral<chipz::interfaces::SPIInterface> {
+public:
+    explicit MyDevice(chipz::interfaces::SPIInterface& spi)
+        : chipz::Peripheral<chipz::interfaces::SPIInterface>(spi) {}
 
-chipz::devices::DS3231::Temperature temp;
-rtc.getTemperature(temp);
+    bool initialize() override { /* ... */ return true; }
+    bool reset()      override { return true; }
+    bool isReady() const override { return status_ == Status::Ready; }
+    chipz::PeripheralBase::Status getStatus() const override { return status_; }
+    std::string getDeviceId() const override { return "MyDevice"; }
+
+    bool main() override {
+        this->transmit(tx_buf_, sizeof(tx_buf_));
+        defer_ms_(100);  // run again in 100 ms
+        return true;
+    }
+
+protected:
+    void onTransferComplete(bool success) override { /* handle result */ }
+};
 ```
-
-## Testing
-
-chipz uses **Google Test** and **Google Mock** for comprehensive testing, with a focus on mocking hardware interfaces for embedded development.
-
-### Testing Philosophy
-
-Since chipz is designed for embedded systems, thorough testing without hardware is crucial. The test suite includes:
-
-- **Mock hardware interfaces** (I2C, SPI, GPIO) for testing drivers without physical devices
-- **Unit tests** for each driver verifying correct behavior
-- **Example tests** showing how to mock hardware communication patterns
-
-### Mock Interfaces
-
-The test suite provides three mock hardware interfaces:
-
-#### MockI2C
-For testing I2C devices like DS3231:
-```cpp
-#include "mock_i2c.hpp"
-
-MockI2C mockI2C;
-EXPECT_CALL(mockI2C, isDeviceConnected(0x68))
-    .WillOnce(Return(true));
-EXPECT_CALL(mockI2C, readRegisterMulti(0x68, 0x00, _, 7))
-    .WillOnce(Return(true));
-```
-
-#### MockSPI
-For testing SPI devices like MAX6675:
-```cpp
-#include "mock_spi.hpp"
-
-MockSPI mockSPI;
-EXPECT_CALL(mockSPI, chipSelect(true));
-EXPECT_CALL(mockSPI, transfer16(_))
-    .WillOnce(Return(0x0320)); // Simulate 25°C
-EXPECT_CALL(mockSPI, chipSelect(false));
-```
-
-#### MockGPIO
-For testing parallel devices like HD44780:
-```cpp
-#include "mock_gpio.hpp"
-
-MockGPIO mockGPIO;
-EXPECT_CALL(mockGPIO, digitalWrite(_, MockGPIO::PinState::High))
-    .Times(AtLeast(1));
-```
-
-### Writing Tests for New Drivers
-
-When adding a new driver, create tests that:
-
-1. Verify basic `Peripheral` interface compliance
-2. Mock the hardware interface (I2C, SPI, GPIO, etc.)
-3. Test normal operation with mocked successful responses
-4. Test error conditions (disconnected devices, invalid data, etc.)
-5. Verify timing requirements where applicable
-
-Example test structure:
-```cpp
-TEST_F(MyDeviceTest, ReadDataWithMockedHardware) {
-    // Setup: Define expected hardware behavior
-    EXPECT_CALL(mockI2C, readRegister(DEVICE_ADDR, DATA_REG, _))
-        .WillOnce(DoAll(SetArgReferee<2>(0x42), Return(true)));
-
-    // Execute: Call the driver method
-    uint8_t value;
-    EXPECT_TRUE(device.readData(value));
-
-    // Verify: Check the result
-    EXPECT_EQ(value, 0x42);
-}
-```
-
-See the `tests/` directory for complete examples of testing each driver type.
 
 ## Project Structure
 
 ```
 chipz/
-├── include/
-│   └── chipz/
-│       ├── chipz.hpp          # Main header (includes all)
-│       ├── peripheral.hpp     # Base class
-│       └── devices/
-│           ├── ds3231.hpp     # DS3231 RTC driver
-│           ├── hd44780.hpp    # HD44780 LCD driver
-│           └── max6675.hpp    # MAX6675 thermocouple driver
-├── examples/                  # Usage examples
-│   ├── basic_usage.cpp
-│   ├── ds3231_example.cpp
-│   ├── hd44780_example.cpp
-│   └── max6675_example.cpp
-├── tests/                     # Google Test suite
-│   ├── mock_i2c.hpp          # Mock I2C interface
-│   ├── mock_spi.hpp          # Mock SPI interface
-│   ├── mock_gpio.hpp         # Mock GPIO interface
-│   ├── test_peripheral.cpp   # Base class tests
-│   ├── test_ds3231.cpp       # DS3231 driver tests
-│   ├── test_hd44780.cpp      # HD44780 driver tests
-│   └── test_max6675.cpp      # MAX6675 driver tests
-├── cmake/                     # CMake configuration files
-├── CMakeLists.txt            # Main CMake file
-├── LICENSE                   # BSD 3-Clause License
-└── README.md                 # This file
+├── include/chipz/
+│   ├── chipz.hpp                  # Umbrella include
+│   ├── core.hpp                   # Scheduler and ISR router
+│   ├── peripheral.hpp             # PeripheralBase and Peripheral<T>
+│   ├── communication_interface.hpp
+│   ├── concepts.hpp
+│   ├── isr_source.hpp
+│   ├── timer_interface.hpp
+│   └── interfaces/
+│       ├── i2c_interface.hpp
+│       └── spi_interface.hpp
+├── devices/
+│   ├── ds3231/include/chipz/devices/ds3231.hpp
+│   ├── hd44780/include/chipz/devices/hd44780.hpp
+│   ├── max6675/include/chipz/devices/max6675.hpp
+│   ├── mcp795w/include/chipz/devices/mcp795w.hpp
+│   └── tja1145/include/chipz/devices/tja1145.hpp
+├── port/
+│   └── stm32h5xx/
+│       ├── config.cpp             # I2C/SPI interface object definitions
+│       ├── chipz_isrs.cpp         # Exception handlers, SysTick, EXTI
+│       └── irq.hpp
+├── examples/
+│   └── stm32H533RET/              # NUCLEO-H533RE: DS3231 (I2C1) + MAX6675 (SPI2)
+├── cmake/
+│   ├── ChipzISR.cmake             # chipz_add_*() and chipz_generate_isrs()
+│   └── chipzConfig.cmake.in
+└── CMakeLists.txt
 ```
 
-## Design Philosophy
+## CMake Targets
 
-chipz follows these principles:
+| Target          | Contents                            |
+|-----------------|-------------------------------------|
+| `chipz::core`   | Core infrastructure (headers only)  |
+| `chipz::ds3231` | DS3231 driver                       |
+| `chipz::max6675`| MAX6675 driver                      |
+| `chipz::mcp795w`| MCP795W driver                      |
+| `chipz::tja1145`| TJA1145 driver                      |
+| `chipz::hd44780`| HD44780 driver                      |
+| `chipz::chipz`  | Umbrella — links all of the above   |
 
-1. **Simplicity** - Clean, intuitive APIs
-2. **Consistency** - Uniform interface across all drivers
-3. **Modern C++** - Leverage C++17 features for safety and expressiveness
-4. **Header-only** - Easy integration without build complications
-5. **Extensibility** - Easy to add new device drivers
-
-## Adding New Drivers
-
-To add a new device driver:
-
-1. Create a new header file in `include/chipz/devices/`
-2. Inherit from `chipz::Peripheral`
-3. Implement the required interface methods
-4. Add device-specific functionality
-5. Include in `chipz.hpp`
-
-Example:
-
-```cpp
-#include "../peripheral.hpp"
-
-namespace chipz {
-namespace devices {
-
-class MyDevice : public Peripheral {
-public:
-    bool initialize() override { /* ... */ }
-    bool reset() override { /* ... */ }
-    bool isReady() const override { /* ... */ }
-    Status getStatus() const override { /* ... */ }
-    std::string getDeviceId() const override { return "My Device"; }
-
-    // Device-specific methods
-    void mySpecificFunction() { /* ... */ }
-};
-
-} // namespace devices
-} // namespace chipz
-```
-
-## License
-
-This project is licensed under the BSD 3-Clause License - see the [LICENSE](LICENSE) file for details.
-
-In summary, you are free to use, modify, and distribute this software, but you must:
-- Include the copyright notice and license text in any redistribution
-- Give appropriate credit to the original author
-
-## Contributing
-
-Contributions are welcome! Please follow the existing code style and architecture patterns.
+Prefer `chipz_add_<device>()` over `target_link_libraries(... chipz::<device>)` directly — the add functions also record the ISR metadata needed by `chipz_generate_isrs()`.
 
 ## Known Issues / TODO
 
-- **Shared bus contention**: When two peripherals sharing a comm interface (e.g. same SPI bus) are both scheduled in the same `Core::service()` cycle, the second peripheral's `this->transmit()` will return an error because the bus is already claimed. Drivers currently handle this by returning from `main()` early and retrying next cycle. A future improvement could add bus-level queuing inside Core so the second peripheral's transfer is automatically deferred without driver-level handling.
+- **Shared bus contention**: When two peripherals sharing a comm interface are both scheduled in the same `Core::service()` cycle, the second peripheral's `transmit()` returns false (bus busy). Drivers handle this by returning early from `main()` and retrying next cycle. A future improvement could add bus-level queuing inside `Core`.
 
-## Status
+## License
 
-This library is in early development. The current drivers are mockups and do not contain actual hardware implementation yet.
+Copyright (c) 2026 Tomasz Ziajko
+
+This software is dual-licensed:
+
+- **GPLv3** (see [LICENSE](LICENSE)) for open-source use
+- **Commercial license** for proprietary or commercial use — contact the author
+
+SPDX-License-Identifier: `GPL-3.0-only`

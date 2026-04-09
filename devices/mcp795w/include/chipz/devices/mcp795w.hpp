@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Tomasz Ziajko
+// SPDX-License-Identifier: GPL-3.0-only
+// Commercial license available — see README
+
 #ifndef CHIPZ_DEVICES_MCP795W_HPP
 #define CHIPZ_DEVICES_MCP795W_HPP
 

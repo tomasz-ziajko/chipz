@@ -12,6 +12,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CHIPZ_BUILD_TESTS "Build chipz tests" OFF)
 
+include(cmake/ChipzISR.cmake)
+
 # Core infrastructure (peripheral base, interfaces, concepts, scheduler)
 add_library(chipz_core INTERFACE)
 target_sources(chipz_core INTERFACE
@@ -21,6 +23,7 @@ target_sources(chipz_core INTERFACE
         include/chipz/peripheral.hpp
         include/chipz/communication_interface.hpp
         include/chipz/concepts.hpp
+        include/chipz/isr_source.hpp
         include/chipz/timer_interface.hpp
         include/chipz/core.hpp
         include/chipz/chipz.hpp
@@ -115,5 +118,6 @@ write_basic_package_version_file(
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/chipzConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/chipzConfigVersion.cmake
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ChipzISR.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/chipz
 )

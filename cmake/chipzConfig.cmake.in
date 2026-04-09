@@ -1,5 +1,6 @@
 @PACKAGE_INIT@
 
 include("${CMAKE_CURRENT_LIST_DIR}/chipzTargets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/ChipzISR.cmake")
 
 check_required_components(chipz)
