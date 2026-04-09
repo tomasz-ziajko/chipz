@@ -1,0 +1,5 @@
+add_subdirectory(ds3231)
+add_subdirectory(max6675)
+add_subdirectory(tja1145)
+add_subdirectory(mcp795w)
+add_subdirectory(hd44780)

@@ -1,0 +1,11 @@
+# CMake build artifacts (in-source configure)
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# Out-of-source build directories
+build/
+build-*/
+out/

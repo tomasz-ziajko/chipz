@@ -1,3 +1,7 @@
+// Copyright (c) 2026 Tomasz Ziajko
+// SPDX-License-Identifier: GPL-3.0-only
+// Commercial license available — see README
+
 #ifndef CHIPZ_INTERFACES_I2C_INTERFACE_HPP
 #define CHIPZ_INTERFACES_I2C_INTERFACE_HPP
 
@@ -44,24 +48,53 @@ public:
                                                const uint8_t* data, uint16_t size)>;
 
     /**
-     * @brief Construct I2C interface with low-level I2C functions and device address
-     * @param device_address I2C device address (e.g., 0x68 for DS3231)
-     * @param read_func Function to perform I2C read operation
-     * @param write_func Function to perform I2C write operation
+     * @brief Construct a bus-level I2C interface
+     * @param read_func  Function to perform I2C memory read
+     * @param write_func Function to perform I2C memory write
      *
-     * Note: Buffers are not pre-allocated. They are allocated on first use
-     * and grow as needed to minimize heap allocations.
+     * No device address is bound at construction — this instance represents
+     * the bus, not a specific device. Drivers call setDeviceAddress() before
+     * each transfer to select their device on the shared bus.
      */
-    I2CInterface(uint8_t device_address,
-                 I2CReadFunction read_func,
+    I2CInterface(I2CReadFunction read_func,
                  I2CWriteFunction write_func)
-        : CommunicationInterface()  // Initialize base class
-        , device_address_(device_address)
+        : CommunicationInterface()
+        , device_address_(0)
         , i2c_read_(read_func)
         , i2c_write_(write_func)
         , current_mem_address_(0)
-    {
-        // Buffers in base class start empty and grow on demand
+    {}
+
+    /**
+     * @brief Set the target device address for the next transfer
+     *
+     * Call this before transmit() / receive() to select the device on the
+     * bus. On a single-device bus this can be called once at startup; on a
+     * shared bus each driver calls it before claiming the bus.
+     *
+     * @param address 7-bit I2C device address
+     */
+    void setDeviceAddress(uint8_t address) { device_address_ = address; }
+
+    /**
+     * @brief Register a device on this I2C bus
+     *
+     * Call once per device during initialization. The returned ConnectionId
+     * should be passed to Peripheral::setConnection() so that
+     * selectConnection() is called automatically before every transfer.
+     *
+     * @param device_address 7-bit I2C device address
+     * @return ConnectionId to pass to Peripheral::setConnection()
+     */
+    ConnectionId registerConnection(uint8_t device_address) {
+        ConnectionId id = nextId();
+        connections_.push_back(device_address);
+        return id;
+    }
+
+    void selectConnection(ConnectionId id) noexcept override {
+        // TODO: handle invalid / out-of-range id
+        device_address_ = connections_[id];
     }
 
     /**
@@ -85,16 +118,17 @@ public:
 
         transfer_in_progress_ = true;
 
-        // Perform I2C write operation
+        // Start async I2C write — completion notified via ISR callback
         int result = i2c_write_(device_address_, current_mem_address_,
                                 tx_buffer_.data(), static_cast<uint16_t>(length));
 
-        transfer_in_progress_ = false;
+        if (result != 0) {
+            // Failed to start transfer — reset state and signal error
+            notifyError();
+            return false;
+        }
 
-        // Notify completion
-        notifyTransferComplete(result == 0);
-
-        return (result == 0);
+        return true;
     }
 
     /**
@@ -113,23 +147,25 @@ public:
 
         transfer_in_progress_ = true;
 
-        // Perform I2C read operation
+        // Start async I2C read into internal buffer — completion notified via ISR callback.
+        // Callers that pass comm_.getRxBuffer() as buffer will read directly from
+        // rx_buffer_ after onTransferComplete() fires; the copy below is skipped.
         int result = i2c_read_(device_address_, current_mem_address_,
                                rx_buffer_.data(), static_cast<uint16_t>(length));
 
-        // Copy from internal buffer to user buffer
-        if (result == 0) {
+        if (result != 0) {
+            notifyError();
+            return false;
+        }
+
+        // Copy from internal buffer to caller-provided buffer if different
+        if (buffer != rx_buffer_.data()) {
             for (size_t i = 0; i < length; ++i) {
                 buffer[i] = rx_buffer_[i];
             }
         }
 
-        transfer_in_progress_ = false;
-
-        // Notify completion
-        notifyTransferComplete(result == 0);
-
-        return (result == 0);
+        return true;
     }
 
     /**
@@ -161,6 +197,7 @@ private:
     I2CReadFunction i2c_read_;
     I2CWriteFunction i2c_write_;
     uint8_t current_mem_address_;
+    std::vector<uint8_t> connections_;
     // Note: tx_buffer_, rx_buffer_, and transfer_in_progress_ are in base class
 };
 
