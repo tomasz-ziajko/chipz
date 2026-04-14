@@ -175,6 +175,10 @@ enum class IRQn : int16_t {
     I3C2_ER             = 132,
 };
 
+/// Numeric range of IRQn for use as Core<> template parameters
+static constexpr int16_t kIRQnFirst = -15;  ///< Reset_IRQn
+static constexpr int16_t kIRQnLast  = 132;  ///< I3C2_ER_IRQn
+
 } // namespace stm32h5xx
 } // namespace port
 } // namespace chipz

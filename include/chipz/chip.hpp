@@ -7,7 +7,6 @@
 
 #include "communication_interface.hpp"
 #include "concepts.hpp"
-#include "isr_source.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -136,32 +135,37 @@ public:
     }
 
     /**
-     * @brief Declare which non-communication ISR sources this chip needs
+     * @brief Declare which hardware interrupt sources this chip needs
      *
-     * Called by Core::add() to populate the ISR dispatch table. Return a
-     * span over a static constexpr array — no heap allocation.
+     * Called by Core::add() to populate the IRQ dispatch table. Return a
+     * span over a static constexpr array — no heap allocation. Values are
+     * platform IRQn numbers cast to int16_t (the underlying type of every
+     * ARM Cortex-M IRQn_Type enum).
      *
-     * Example (DS3231 with an alarm pin on EXTI3):
+     * Example (DS3231 with an alarm pin on EXTI3, STM32H5xx port):
      * @code
-     *   static constexpr ISRSource kISRs[] = { ISRSource::EXTI3 };
-     *   std::span<const ISRSource> requiredISRs() const noexcept override {
-     *       return kISRs;
+     *   static constexpr int16_t kIRQs[] = {
+     *       static_cast<int16_t>(chipz::port::stm32h5xx::IRQn::EXTI3)
+     *   };
+     *   std::span<const int16_t> requiredIRQs() const noexcept override {
+     *       return kIRQs;
      *   }
      * @endcode
      *
-     * @return View over the ISR sources required by this chip
+     * @return View over the IRQ numbers required by this chip
      */
-    virtual std::span<const ISRSource> requiredISRs() const noexcept { return {}; }
+    virtual std::span<const int16_t> requiredIRQs() const noexcept { return {}; }
 
     /**
-     * @brief Handle a routed non-communication hardware interrupt
+     * @brief Handle a routed hardware interrupt
      *
-     * Called by Core::service() pass 1 when an ISR source declared in
-     * requiredISRs() fires. Runs in main-loop context — never in ISR context.
+     * Called by Core::service() pass 1 when an IRQ declared in
+     * requiredIRQs() fires. Runs in main-loop context — never in ISR context.
+     * Cast irqn to the platform IRQn enum to identify the source.
      *
-     * @param source The ISRSource that fired
+     * @param irqn Platform IRQ number (cast from port IRQn enum)
      */
-    virtual void onISR(ISRSource source) noexcept { (void)source; }
+    virtual void onIRQ(int16_t irqn) noexcept { (void)irqn; }
 
     // -------------------------------------------------------------------------
     // Callback injection — called by Core::add()

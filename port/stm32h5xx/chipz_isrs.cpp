@@ -4,35 +4,81 @@
 
 /**
  * @file chipz_isrs.cpp
- * @brief Cortex-M exception handlers and GPIO EXTI handlers for STM32H5xx
+ * @brief All interrupt handlers and HAL weak callback overrides for STM32H5xx
  *
- * This file provides:
- *   - Cortex-M system exception handlers (NMI, faults, SVC, PendSV, SysTick)
- *   - GPIO EXTI line handlers (EXTI0-15), routing fired lines to g_core.onISR()
+ * This file is the single source of truth for every ISR on the STM32H5xx.
+ * It replaces both stm32h5xx_it.c and any cmake-generated chipz_isr_handlers.cpp
+ * — neither of those files should be compiled in a chipz project.
  *
- * Peripheral communication IRQ handlers (I2C, SPI, etc.) and their HAL weak
- * callback overrides are generated automatically by chipz_generate_isrs() into
- * chipz_isr_handlers.cpp — they are not defined here.
+ * Weak symbol override
+ * --------------------
+ * Every function defined here is an extern "C" symbol without __weak, which
+ * causes the linker to prefer these definitions over the __weak stubs in the
+ * ST startup / HAL files. No code generation or cmake registration needed.
+ *
+ * Communication peripherals (I2C, SPI)
+ * -------------------------------------
+ * The IRQ handler calls the HAL handler to advance the HAL state machine.
+ * When the HAL determines the transfer is complete it calls the HAL weak
+ * callback (e.g. HAL_I2C_MemTxCpltCallback), which is also overridden here.
+ * The callback calls notify*() on the matching chipz interface object, which
+ * sets interrupt_pending_ and wakes Core via the static pending flag.
+ *
+ * Non-communication peripherals (EXTI, timers, DMA, CAN, ...)
+ * -------------------------------------------------------------
+ * The IRQ handler calls the HAL handler (if applicable) then calls
+ * g_core.onIRQ(IRQn::xxx) to set a pending bit. Core routes to the chip that
+ * registered for that IRQn in service() pass 1.
+ *
+ * HAL handles (hi2c1, hspi2, ...) are declared __weak so that only the
+ * instances actually initialised by the application are linked. The callbacks
+ * guard each branch with an address check — a weak symbol that is not defined
+ * resolves to address 0, so the check is always false and the branch is skipped.
  *
  * SysTick
  * -------
  * SysTick_Handler calls HAL_IncTick() (required by HAL timeout machinery) and
- * chipz_systick_tick() (defined in app.cpp). Both will be removed when the HAL
- * dependency is eliminated.
- *
- * EXTI note (STM32H5xx vs STM32F4/F7)
- * ------------------------------------
- * Unlike STM32F4/F7, the H5xx family assigns a dedicated vector to every
- * EXTI line 0-15. chipz::ISRSource still groups lines 5-9 and 10-15 (at
- * most one peripheral may register per group at the scheduler level).
+ * chipz_systick_tick() (application-defined, calls SysTickTimer::onSysTick()).
  */
 
 #include <chipz/core.hpp>
-#include <chipz/isr_source.hpp>
+#include <chipz/interfaces/i2c_interface.hpp>
+#include <chipz/interfaces/spi_interface.hpp>
+#include "irq.hpp"
 #include "stm32h5xx_hal.h"
 
-extern chipz::Core g_core;
+using chipz::port::stm32h5xx::IRQn;
+using chipz::port::stm32h5xx::kIRQnFirst;
+using chipz::port::stm32h5xx::kIRQnLast;
+
+// ---------------------------------------------------------------------------
+// External declarations
+// ---------------------------------------------------------------------------
+
+extern chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core;
 extern "C" void chipz_systick_tick();
+
+// HAL handles — __weak so that undefined instances resolve to address 0
+extern "C" {
+__attribute__((weak)) extern I2C_HandleTypeDef hi2c1;
+__attribute__((weak)) extern I2C_HandleTypeDef hi2c2;
+__attribute__((weak)) extern I2C_HandleTypeDef hi2c3;
+
+__attribute__((weak)) extern SPI_HandleTypeDef hspi1;
+__attribute__((weak)) extern SPI_HandleTypeDef hspi2;
+__attribute__((weak)) extern SPI_HandleTypeDef hspi3;
+__attribute__((weak)) extern SPI_HandleTypeDef hspi4;
+}
+
+// chipz interface objects — always defined in config.cpp
+extern chipz::interfaces::I2CInterface g_i2c1;
+extern chipz::interfaces::I2CInterface g_i2c2;
+extern chipz::interfaces::I2CInterface g_i2c3;
+
+extern chipz::interfaces::SPIInterface g_spi1;
+extern chipz::interfaces::SPIInterface g_spi2;
+extern chipz::interfaces::SPIInterface g_spi3;
+extern chipz::interfaces::SPIInterface g_spi4;
 
 extern "C" {
 
@@ -55,24 +101,121 @@ void SysTick_Handler() {
 }
 
 // ---------------------------------------------------------------------------
-// GPIO EXTI line handlers
+// GPIO EXTI line handlers — each line has a dedicated vector on STM32H5xx
 // ---------------------------------------------------------------------------
 
-void EXTI0_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);  g_core.onISR(chipz::ISRSource::EXTI0);     }
-void EXTI1_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_1);  g_core.onISR(chipz::ISRSource::EXTI1);     }
-void EXTI2_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_2);  g_core.onISR(chipz::ISRSource::EXTI2);     }
-void EXTI3_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_3);  g_core.onISR(chipz::ISRSource::EXTI3);     }
-void EXTI4_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_4);  g_core.onISR(chipz::ISRSource::EXTI4);     }
-void EXTI5_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_5);  g_core.onISR(chipz::ISRSource::EXTI5_9);   }
-void EXTI6_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_6);  g_core.onISR(chipz::ISRSource::EXTI5_9);   }
-void EXTI7_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_7);  g_core.onISR(chipz::ISRSource::EXTI5_9);   }
-void EXTI8_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_8);  g_core.onISR(chipz::ISRSource::EXTI5_9);   }
-void EXTI9_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_9);  g_core.onISR(chipz::ISRSource::EXTI5_9);   }
-void EXTI10_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_10); g_core.onISR(chipz::ISRSource::EXTI10_15); }
-void EXTI11_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_11); g_core.onISR(chipz::ISRSource::EXTI10_15); }
-void EXTI12_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_12); g_core.onISR(chipz::ISRSource::EXTI10_15); }
-void EXTI13_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_13); g_core.onISR(chipz::ISRSource::EXTI10_15); }
-void EXTI14_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_14); g_core.onISR(chipz::ISRSource::EXTI10_15); }
-void EXTI15_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_15); g_core.onISR(chipz::ISRSource::EXTI10_15); }
+void EXTI0_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);  g_core.onIRQ(IRQn::EXTI0);  }
+void EXTI1_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_1);  g_core.onIRQ(IRQn::EXTI1);  }
+void EXTI2_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_2);  g_core.onIRQ(IRQn::EXTI2);  }
+void EXTI3_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_3);  g_core.onIRQ(IRQn::EXTI3);  }
+void EXTI4_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_4);  g_core.onIRQ(IRQn::EXTI4);  }
+void EXTI5_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_5);  g_core.onIRQ(IRQn::EXTI5);  }
+void EXTI6_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_6);  g_core.onIRQ(IRQn::EXTI6);  }
+void EXTI7_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_7);  g_core.onIRQ(IRQn::EXTI7);  }
+void EXTI8_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_8);  g_core.onIRQ(IRQn::EXTI8);  }
+void EXTI9_IRQHandler()  { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_9);  g_core.onIRQ(IRQn::EXTI9);  }
+void EXTI10_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_10); g_core.onIRQ(IRQn::EXTI10); }
+void EXTI11_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_11); g_core.onIRQ(IRQn::EXTI11); }
+void EXTI12_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_12); g_core.onIRQ(IRQn::EXTI12); }
+void EXTI13_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_13); g_core.onIRQ(IRQn::EXTI13); }
+void EXTI14_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_14); g_core.onIRQ(IRQn::EXTI14); }
+void EXTI15_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_15); g_core.onIRQ(IRQn::EXTI15); }
+
+// ---------------------------------------------------------------------------
+// I2C IRQ handlers
+// ---------------------------------------------------------------------------
+
+void I2C1_EV_IRQHandler() { HAL_I2C_EV_IRQHandler(&hi2c1); }
+void I2C1_ER_IRQHandler() { HAL_I2C_ER_IRQHandler(&hi2c1); }
+void I2C2_EV_IRQHandler() { HAL_I2C_EV_IRQHandler(&hi2c2); }
+void I2C2_ER_IRQHandler() { HAL_I2C_ER_IRQHandler(&hi2c2); }
+void I2C3_EV_IRQHandler() { HAL_I2C_EV_IRQHandler(&hi2c3); }
+void I2C3_ER_IRQHandler() { HAL_I2C_ER_IRQHandler(&hi2c3); }
+
+// ---------------------------------------------------------------------------
+// SPI IRQ handlers
+// ---------------------------------------------------------------------------
+
+void SPI1_IRQHandler() { HAL_SPI_IRQHandler(&hspi1); }
+void SPI2_IRQHandler() { HAL_SPI_IRQHandler(&hspi2); }
+void SPI3_IRQHandler() { HAL_SPI_IRQHandler(&hspi3); }
+void SPI4_IRQHandler() { HAL_SPI_IRQHandler(&hspi4); }
 
 } // extern "C"
+
+// ---------------------------------------------------------------------------
+// HAL I2C weak callback overrides
+//
+// Each callback checks which handle fired and calls notify*() on the matching
+// chipz interface. The address check (&hix == nullptr) is always false when
+// the handle is properly defined; when it is an undefined weak symbol it
+// resolves to address 0 and the branch is safely skipped.
+// ---------------------------------------------------------------------------
+
+extern "C" void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef* h) {
+    if (&hi2c1 && h == &hi2c1) { g_i2c1.notifyTransferComplete(true); return; }
+    if (&hi2c2 && h == &hi2c2) { g_i2c2.notifyTransferComplete(true); return; }
+    if (&hi2c3 && h == &hi2c3) { g_i2c3.notifyTransferComplete(true); return; }
+}
+
+extern "C" void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef* h) {
+    if (&hi2c1 && h == &hi2c1) { g_i2c1.notifyTransferComplete(true); return; }
+    if (&hi2c2 && h == &hi2c2) { g_i2c2.notifyTransferComplete(true); return; }
+    if (&hi2c3 && h == &hi2c3) { g_i2c3.notifyTransferComplete(true); return; }
+}
+
+extern "C" void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef* h) {
+    if (&hi2c1 && h == &hi2c1) { g_i2c1.notifyTransferComplete(true); return; }
+    if (&hi2c2 && h == &hi2c2) { g_i2c2.notifyTransferComplete(true); return; }
+    if (&hi2c3 && h == &hi2c3) { g_i2c3.notifyTransferComplete(true); return; }
+}
+
+extern "C" void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef* h) {
+    if (&hi2c1 && h == &hi2c1) { g_i2c1.notifyTransferComplete(true); return; }
+    if (&hi2c2 && h == &hi2c2) { g_i2c2.notifyTransferComplete(true); return; }
+    if (&hi2c3 && h == &hi2c3) { g_i2c3.notifyTransferComplete(true); return; }
+}
+
+extern "C" void HAL_I2C_ErrorCallback(I2C_HandleTypeDef* h) {
+    if (&hi2c1 && h == &hi2c1) { g_i2c1.notifyError(); return; }
+    if (&hi2c2 && h == &hi2c2) { g_i2c2.notifyError(); return; }
+    if (&hi2c3 && h == &hi2c3) { g_i2c3.notifyError(); return; }
+}
+
+extern "C" void HAL_I2C_AbortCpltCallback(I2C_HandleTypeDef* h) {
+    if (&hi2c1 && h == &hi2c1) { g_i2c1.notifyError(); return; }
+    if (&hi2c2 && h == &hi2c2) { g_i2c2.notifyError(); return; }
+    if (&hi2c3 && h == &hi2c3) { g_i2c3.notifyError(); return; }
+}
+
+// ---------------------------------------------------------------------------
+// HAL SPI weak callback overrides
+// ---------------------------------------------------------------------------
+
+extern "C" void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef* h) {
+    if (&hspi1 && h == &hspi1) { g_spi1.notifyTransferComplete(true); return; }
+    if (&hspi2 && h == &hspi2) { g_spi2.notifyTransferComplete(true); return; }
+    if (&hspi3 && h == &hspi3) { g_spi3.notifyTransferComplete(true); return; }
+    if (&hspi4 && h == &hspi4) { g_spi4.notifyTransferComplete(true); return; }
+}
+
+extern "C" void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef* h) {
+    if (&hspi1 && h == &hspi1) { g_spi1.notifyTransferComplete(true); return; }
+    if (&hspi2 && h == &hspi2) { g_spi2.notifyTransferComplete(true); return; }
+    if (&hspi3 && h == &hspi3) { g_spi3.notifyTransferComplete(true); return; }
+    if (&hspi4 && h == &hspi4) { g_spi4.notifyTransferComplete(true); return; }
+}
+
+extern "C" void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef* h) {
+    if (&hspi1 && h == &hspi1) { g_spi1.notifyTransferComplete(true); return; }
+    if (&hspi2 && h == &hspi2) { g_spi2.notifyTransferComplete(true); return; }
+    if (&hspi3 && h == &hspi3) { g_spi3.notifyTransferComplete(true); return; }
+    if (&hspi4 && h == &hspi4) { g_spi4.notifyTransferComplete(true); return; }
+}
+
+extern "C" void HAL_SPI_ErrorCallback(SPI_HandleTypeDef* h) {
+    if (&hspi1 && h == &hspi1) { g_spi1.notifyError(); return; }
+    if (&hspi2 && h == &hspi2) { g_spi2.notifyError(); return; }
+    if (&hspi3 && h == &hspi3) { g_spi3.notifyError(); return; }
+    if (&hspi4 && h == &hspi4) { g_spi4.notifyError(); return; }
+}

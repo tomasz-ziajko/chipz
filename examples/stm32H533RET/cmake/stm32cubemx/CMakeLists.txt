@@ -22,8 +22,8 @@ set(MX_Include_Dirs
 # STM32CubeMX generated application sources
 set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/main.c
-    # stm32h5xx_it.c excluded: all vectors owned by Chipz/chipz_isrs.cpp
-    # and the chipz_generate_isrs()-generated chipz_isr_handlers.cpp
+    # stm32h5xx_it.c excluded: all IRQ handlers and HAL callbacks are owned
+    # by port/stm32h5xx/chipz_isrs.cpp (strong symbols override startup.s weak aliases)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/stm32h5xx_hal_msp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/sysmem.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/syscalls.c

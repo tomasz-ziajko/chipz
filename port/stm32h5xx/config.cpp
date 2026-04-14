@@ -66,6 +66,7 @@ __attribute__((weak)) extern I2C_HandleTypeDef hi2c4;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi1;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi3;
+__attribute__((weak)) extern SPI_HandleTypeDef hspi4;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,5 +148,11 @@ chipz::interfaces::SPIInterface g_spi2{
 chipz::interfaces::SPIInterface g_spi3{
     [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
         return HAL_SPI_TransmitReceive_IT(&hspi3, tx, rx, len);
+    }
+};
+
+chipz::interfaces::SPIInterface g_spi4{
+    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
+        return HAL_SPI_TransmitReceive_IT(&hspi4, tx, rx, len);
     }
 };
