@@ -26,8 +26,7 @@ namespace interfaces {
  *
  * Typical usage — static frame, reused each cycle:
  * @code
- *   static chipz::interfaces::CANFrame<8> tx_frame =
- *       chipz::interfaces::CANFrame<8>::classic(0x1A0, false, nullptr, 0);
+ *   static chipz::interfaces::CANFrame<8> tx_frame{ 0x1A0 };
  *
  *   // In the periodic handler:
  *   tx_frame.data()[0] = sensor_value;
@@ -35,16 +34,16 @@ namespace interfaces {
  *   can.transmit(tx_frame);
  * @endcode
  *
- * Typical usage — dynamic frame, dispatched once:
+ * Typical usage — one-shot FD frame:
  * @code
- *   auto frame = chipz::interfaces::CANFrame<64>::fd(0x18FF1234, true, true, buf, 32);
+ *   chipz::interfaces::CANFrame<64> frame{ 0x18FF1234, true, true, true, buf, 32 };
  *   can.transmit(frame);
  * @endcode
  *
  * Received frame — copy into a pre-allocated object:
  * @code
  *   void MyDevice::onRxComplete(CommunicationInterface& comm) {
- *       can.copyReceivedFrame(rx_storage_);   // copy into static member
+ *       can.copyReceivedFrame(rx_storage_);
  *       process(rx_storage_);
  *   }
  * @endcode
@@ -52,50 +51,22 @@ namespace interfaces {
 template<size_t MaxPayload = 64>
 class CANFrame {
 public:
-    CANFrame() = default;
-
-    // -------------------------------------------------------------------------
-    // Named constructors — explicit about frame type at creation time
-    // -------------------------------------------------------------------------
-
     /**
-     * @brief Create a classic CAN 2.0 frame (up to 8 data bytes)
-     * @param id          11-bit (extended_id=false) or 29-bit (extended_id=true) CAN ID
+     * @brief Construct a CAN / CAN-FD frame
+     *
+     * @param id          CAN ID (11-bit standard or 29-bit extended)
      * @param extended_id true for 29-bit extended identifier
-     * @param data        Payload bytes; may be nullptr if length is 0
-     * @param length      Number of payload bytes (clamped to min(8, MaxPayload))
-     */
-    static CANFrame classic(uint32_t id, bool extended_id,
-                            const uint8_t* data, uint8_t length) {
-        CANFrame f;
-        f.id_          = id;
-        f.extended_id_ = extended_id;
-        f.fd_format_   = false;
-        f.brs_         = false;
-        uint8_t clamped = length < 8u ? length : 8u;
-        if (clamped > MaxPayload) clamped = static_cast<uint8_t>(MaxPayload);
-        f.applyData(data, clamped);
-        return f;
-    }
-
-    /**
-     * @brief Create a CAN-FD frame (up to 64 data bytes)
-     * @param id          CAN ID
-     * @param extended_id true for 29-bit extended identifier
-     * @param brs         true to enable bit rate switching
-     * @param data        Payload bytes; may be nullptr if length is 0
+     * @param fd_format   true for CAN-FD frame, false for classic CAN
+     * @param brs         true to enable bit rate switching (CAN-FD only)
+     * @param data        Payload bytes; may be nullptr when length is 0
      * @param length      Number of payload bytes (clamped to MaxPayload)
      */
-    static CANFrame fd(uint32_t id, bool extended_id, bool brs,
-                       const uint8_t* data, uint8_t length) {
-        CANFrame f;
-        f.id_          = id;
-        f.extended_id_ = extended_id;
-        f.fd_format_   = true;
-        f.brs_         = brs;
-        uint8_t clamped = length < MaxPayload ? length : static_cast<uint8_t>(MaxPayload);
-        f.applyData(data, clamped);
-        return f;
+    CANFrame(uint32_t id = 0, bool extended_id = false,
+             bool fd_format = false, bool brs = false,
+             const uint8_t* data = nullptr, uint8_t length = 0)
+        : id_(id), extended_id_(extended_id), fd_format_(fd_format), brs_(brs)
+    {
+        applyData(data, length < MaxPayload ? length : static_cast<uint8_t>(MaxPayload));
     }
 
     // -------------------------------------------------------------------------
