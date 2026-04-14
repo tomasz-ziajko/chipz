@@ -48,21 +48,8 @@ add_subdirectory(../.. chipz)
 # chipz device registration — links device targets and records ISR metadata
 # ---------------------------------------------------------------------------
 
-chipz_add_ds3231(TARGET ${CMAKE_PROJECT_NAME}
-    I2C_INSTANCE I2C1
-    I2C_HANDLE   hi2c1
-    I2C_IFACE    g_i2c1)
-
-chipz_add_max6675(TARGET ${CMAKE_PROJECT_NAME}
-    SPI_INSTANCE SPI2
-    SPI_HANDLE   hspi2
-    SPI_IFACE    g_spi2)
-
-# Generate chipz_isr_handlers.cpp: I2C1/I2C2 EV+ER handlers, SPI2 handler,
-# and all HAL weak callback overrides routing to chipz notify*() functions.
-chipz_generate_isrs(TARGET     ${CMAKE_PROJECT_NAME}
-                    CORE       g_core
-                    HAL_INCLUDE "stm32h5xx_hal.h")
+chipz_add_ds3231(TARGET ${CMAKE_PROJECT_NAME})
+chipz_add_max6675(TARGET ${CMAKE_PROJECT_NAME})
 
 # ---------------------------------------------------------------------------
 # chipz application sources
@@ -81,7 +68,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../port/stm32h5xx
 )
 
 # Suppress GCC 13 ABI change notes for iterator parameter passing (psabi)

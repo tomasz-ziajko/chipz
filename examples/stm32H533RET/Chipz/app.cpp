@@ -27,8 +27,13 @@
 #include <chipz/devices/max6675.hpp>
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
+#include "irq.hpp"
 
 #include "stm32h5xx_hal.h"
+
+using chipz::port::stm32h5xx::IRQn;
+using chipz::port::stm32h5xx::kIRQnFirst;
+using chipz::port::stm32h5xx::kIRQnLast;
 
 // ---------------------------------------------------------------------------
 // SysTickTimer — concrete TimerInterface backed by HAL_GetTick() (1 ms tick)
@@ -70,7 +75,7 @@ extern chipz::interfaces::I2CInterface g_i2c1;
 extern chipz::interfaces::SPIInterface g_spi2;
 
 SysTickTimer g_systick_timer;
-chipz::Core  g_core{g_systick_timer};
+chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_systick_timer};
 
 chipz::devices::DS3231  g_ds3231 {g_i2c1, []() -> uint32_t { return HAL_GetTick(); }};
 chipz::devices::MAX6675 g_max6675{g_spi2, []() -> uint32_t { return HAL_GetTick(); }};
