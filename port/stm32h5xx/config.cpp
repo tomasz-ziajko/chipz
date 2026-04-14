@@ -50,6 +50,7 @@
 
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
+#include <chipz/interfaces/uart_interface.hpp>
 
 #include "stm32h5xx_hal.h"
 
@@ -67,6 +68,11 @@ __attribute__((weak)) extern SPI_HandleTypeDef hspi1;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi3;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi4;
+
+__attribute__((weak)) extern UART_HandleTypeDef huart1;
+__attribute__((weak)) extern UART_HandleTypeDef huart2;
+__attribute__((weak)) extern UART_HandleTypeDef huart3;
+__attribute__((weak)) extern UART_HandleTypeDef huart4;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,5 +160,45 @@ chipz::interfaces::SPIInterface g_spi3{
 chipz::interfaces::SPIInterface g_spi4{
     [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
         return HAL_SPI_TransmitReceive_IT(&hspi4, tx, rx, len);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// UART interfaces
+// ---------------------------------------------------------------------------
+
+chipz::interfaces::UARTInterface g_uart1{
+    [](const uint8_t* data, uint16_t len) -> int {
+        return HAL_UART_Transmit_IT(&huart1, data, len);
+    },
+    [](uint8_t* buf, uint16_t len) -> int {
+        return HAL_UART_Receive_IT(&huart1, buf, len);
+    }
+};
+
+chipz::interfaces::UARTInterface g_uart2{
+    [](const uint8_t* data, uint16_t len) -> int {
+        return HAL_UART_Transmit_IT(&huart2, data, len);
+    },
+    [](uint8_t* buf, uint16_t len) -> int {
+        return HAL_UART_Receive_IT(&huart2, buf, len);
+    }
+};
+
+chipz::interfaces::UARTInterface g_uart3{
+    [](const uint8_t* data, uint16_t len) -> int {
+        return HAL_UART_Transmit_IT(&huart3, data, len);
+    },
+    [](uint8_t* buf, uint16_t len) -> int {
+        return HAL_UART_Receive_IT(&huart3, buf, len);
+    }
+};
+
+chipz::interfaces::UARTInterface g_uart4{
+    [](const uint8_t* data, uint16_t len) -> int {
+        return HAL_UART_Transmit_IT(&huart4, data, len);
+    },
+    [](uint8_t* buf, uint16_t len) -> int {
+        return HAL_UART_Receive_IT(&huart4, buf, len);
     }
 };
