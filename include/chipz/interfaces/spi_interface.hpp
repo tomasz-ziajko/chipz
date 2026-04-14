@@ -69,7 +69,7 @@ public:
         return id;
     }
 
-    void selectConnection(ConnectionId id) noexcept override {
+    void selectConnection(ConnectionId id) override {
         // TODO: handle invalid / out-of-range id
         active_cs_ = connections_[id];
     }

@@ -89,7 +89,7 @@ public:
      *
      * @param irqn The IRQn that fired
      */
-    void onIRQ(IRQnType irqn) noexcept {
+    void onIRQ(IRQnType irqn) {
         const size_t idx = toIdx(irqn);
         if (idx < kRange) {
             isr_pending_[idx / 32u].fetch_or(
@@ -107,7 +107,7 @@ public:
      * correspond to a registered IRQ source (e.g. a timer used solely as a
      * scheduler tick).
      */
-    void wakeFromISR() noexcept {
+    void wakeFromISR() {
         pending_.store(true, std::memory_order_release);
     }
 
@@ -310,7 +310,7 @@ private:
         ChipBase*               active_peripheral;
     };
 
-    static constexpr size_t toIdx(IRQnType irqn) noexcept {
+    static constexpr size_t toIdx(IRQnType irqn) {
         return static_cast<size_t>(
             static_cast<int>(static_cast<int16_t>(irqn)) - static_cast<int>(kIRQnFirst)
         );

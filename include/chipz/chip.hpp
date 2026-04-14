@@ -120,7 +120,7 @@ public:
      * Called by Core when a hardware interrupt fires on one of this chip's
      * communication interfaces. The @p which parameter identifies the
      * interface that fired. Chip<CommInterfaces...> overrides this and
-     * dispatches to onTransferComplete / onError / onArbitrationLost.
+     * dispatches to onTransferComplete / onRxComplete / onError / onArbitrationLost.
      *
      * @param which   The interface whose interrupt fired
      * @param type    Type of interrupt that fired
@@ -147,14 +147,14 @@ public:
      *   static constexpr int16_t kIRQs[] = {
      *       static_cast<int16_t>(chipz::port::stm32h5xx::IRQn::EXTI3)
      *   };
-     *   std::span<const int16_t> requiredIRQs() const noexcept override {
+     *   std::span<const int16_t> requiredIRQs() const override {
      *       return kIRQs;
      *   }
      * @endcode
      *
      * @return View over the IRQ numbers required by this chip
      */
-    virtual std::span<const int16_t> requiredIRQs() const noexcept { return {}; }
+    virtual std::span<const int16_t> requiredIRQs() const { return {}; }
 
     /**
      * @brief Handle a routed hardware interrupt
@@ -165,7 +165,7 @@ public:
      *
      * @param irqn Platform IRQ number (cast from port IRQn enum)
      */
-    virtual void onIRQ(int16_t irqn) noexcept { (void)irqn; }
+    virtual void onIRQ(int16_t irqn) { (void)irqn; }
 
     // -------------------------------------------------------------------------
     // Callback injection — called by Core::add()
@@ -304,7 +304,7 @@ private:
  *                               claim the bus with Core before forwarding
  * - setConnection<T>()        — register the per-interface connection ID
  * - getCommInterfaces()       — returns all interfaces for Core registration
- * - Per-interrupt-type virtuals (onTransferComplete, onError,
+ * - Per-interrupt-type virtuals (onTransferComplete, onRxComplete, onError,
  *   onArbitrationLost) with the firing interface passed as the first argument
  *
  * All interface types in the pack must be distinct.
@@ -342,6 +342,7 @@ public:
         using IT = CommunicationInterface::InterruptType;
         switch (type) {
             case IT::TransferComplete: onTransferComplete(which, success); break;
+            case IT::RxComplete:       onRxComplete(which);                break;
             case IT::Error:            onError(which);                     break;
             case IT::ArbitrationLost:  onArbitrationLost(which);           break;
         }
@@ -454,6 +455,8 @@ protected:
     virtual void onTransferComplete(CommunicationInterface& which, bool success) {
         (void)which; (void)success;
     }
+
+    virtual void onRxComplete(CommunicationInterface& which) { (void)which; }
 
     virtual void onError(CommunicationInterface& which) { (void)which; }
 

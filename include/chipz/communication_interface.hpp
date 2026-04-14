@@ -39,7 +39,8 @@ public:
      * New interface-specific types can be added here as the library grows.
      */
     enum class InterruptType {
-        TransferComplete,  ///< Successful data transfer (SPI, I2C, UART...)
+        TransferComplete,  ///< TX complete (SPI, I2C, UART...)
+        RxComplete,        ///< RX complete, independent of TX (full-duplex UART)
         Error,             ///< Bus or protocol error (I2C NACK, SPI fault...)
         ArbitrationLost    ///< I2C arbitration lost
     };
@@ -68,7 +69,7 @@ public:
      *
      * @param id ConnectionId returned by a previous registerConnection() call
      */
-    virtual void selectConnection(ConnectionId id) noexcept {
+    virtual void selectConnection(ConnectionId id) {
         // TODO: handle invalid / unregistered id
         (void)id;
     }
@@ -162,7 +163,7 @@ public:
      *
      * @param p Pointer to Core's pending_ atomic flag
      */
-    static void registerCorePending(std::atomic<bool>* p) noexcept {
+    static void registerCorePending(std::atomic<bool>* p) {
         s_core_pending_ = p;
     }
 
@@ -209,7 +210,7 @@ public:
      *
      * @param success true if transfer succeeded, false on error
      */
-    void notifyTransferComplete(bool success) noexcept {
+    void notifyTransferComplete(bool success) {
         transfer_in_progress_ = false;
         interrupt_type_    = InterruptType::TransferComplete;
         interrupt_success_ = success;
@@ -222,7 +223,7 @@ public:
     /**
      * @brief Signal a bus or protocol error interrupt
      */
-    void notifyError() noexcept {
+    void notifyError() {
         transfer_in_progress_ = false;
         interrupt_type_    = InterruptType::Error;
         interrupt_success_ = false;
@@ -233,9 +234,28 @@ public:
     }
 
     /**
+     * @brief Signal an RX-complete interrupt (independent of TX)
+     *
+     * Called from HAL UART RX-complete callbacks. Does NOT clear
+     * transfer_in_progress_ (that tracks TX). Concrete implementations that
+     * track a separate rx_in_progress_ flag (e.g. UARTInterface) should shadow
+     * this method to clear it before calling this base version.
+     *
+     * Safe to call from ISR context.
+     */
+    void notifyRxComplete() {
+        interrupt_type_    = InterruptType::RxComplete;
+        interrupt_success_ = true;
+        interrupt_pending_ = true;
+        if (s_core_pending_) {
+            s_core_pending_->store(true, std::memory_order_release);
+        }
+    }
+
+    /**
      * @brief Signal an I2C arbitration-lost interrupt
      */
-    void notifyArbitrationLost() noexcept {
+    void notifyArbitrationLost() {
         transfer_in_progress_ = false;
         interrupt_type_    = InterruptType::ArbitrationLost;
         interrupt_success_ = false;
@@ -281,7 +301,7 @@ protected:
      * Called by derived-class registerConnection() implementations to obtain
      * a unique ID before storing per-device configuration in their own vector.
      */
-    ConnectionId nextId() noexcept { return next_id_++; }
+    ConnectionId nextId() { return next_id_++; }
 
 private:
     uint8_t next_id_{0};

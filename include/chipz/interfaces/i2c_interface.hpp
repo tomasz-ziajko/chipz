@@ -92,7 +92,7 @@ public:
         return id;
     }
 
-    void selectConnection(ConnectionId id) noexcept override {
+    void selectConnection(ConnectionId id) override {
         // TODO: handle invalid / out-of-range id
         device_address_ = connections_[id];
     }
