@@ -8,7 +8,7 @@
 // Main chipz library header
 // Include this to get access to all chipz functionality
 
-#include "peripheral.hpp"
+#include "chip.hpp"
 #include "timer_interface.hpp"
 #include "core.hpp"
 #include "communication_interface.hpp"

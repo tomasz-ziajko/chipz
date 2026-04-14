@@ -61,7 +61,7 @@ public:
      * @brief Register a device on this SPI bus
      *
      * @param cs_func Function to assert/deassert this device's chip-select pin
-     * @return ConnectionId to pass to Peripheral::setConnection()
+     * @return ConnectionId to pass to Chip::setConnection()
      */
     ConnectionId registerConnection(ChipSelectFunction cs_func) {
         ConnectionId id = nextId();

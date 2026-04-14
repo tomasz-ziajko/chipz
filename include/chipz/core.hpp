@@ -6,7 +6,7 @@
 #define CHIPZ_CORE_HPP
 
 #include "isr_source.hpp"
-#include "peripheral.hpp"
+#include "chip.hpp"
 #include "timer_interface.hpp"
 #include <array>
 #include <atomic>
@@ -45,7 +45,7 @@ namespace chipz {
  *
  * Priority:
  *   - Lower number = higher priority (0 = highest, 255 = lowest).
- *   - Default is sourced from PeripheralBase::getDefaultPriority() (128).
+ *   - Default is sourced from ChipBase::getDefaultPriority() (128).
  *   - Can be overridden at runtime via setPriority().
  *
  * Shared bus routing:
@@ -101,7 +101,7 @@ public:
      *
      * @param peripheral Peripheral to register
      */
-    void add(PeripheralBase& peripheral) {
+    void add(ChipBase& peripheral) {
         // Inject defer callbacks
         peripheral.setDeferCallbacks(
             [this, &peripheral](uint32_t ms) {
@@ -183,7 +183,7 @@ public:
      * @param peripheral Target peripheral (must already be registered via add())
      * @param priority   New priority (0 = highest, 255 = lowest)
      */
-    void setPriority(PeripheralBase& peripheral, uint8_t priority) {
+    void setPriority(ChipBase& peripheral, uint8_t priority) {
         for (auto& entry : entries_) {
             if (entry.peripheral == &peripheral) {
                 entry.priority = priority;
@@ -267,7 +267,7 @@ public:
 
 private:
     struct ScheduleEntry {
-        PeripheralBase* peripheral;
+        ChipBase* peripheral;
         uint64_t        next_deadline_ticks;
         uint8_t         priority;
         bool            ran_this_cycle;
@@ -275,7 +275,7 @@ private:
 
     struct CommEntry {
         CommunicationInterface* comm;
-        PeripheralBase*         active_peripheral;
+        ChipBase*         active_peripheral;
     };
 
     static constexpr size_t kISRCount = static_cast<size_t>(ISRSource::COUNT);
@@ -288,9 +288,9 @@ private:
     uint64_t                                   ticks_per_ms_;
     std::vector<ScheduleEntry>                 entries_;
     std::vector<CommEntry>                     comm_entries_;
-    std::array<PeripheralBase*, kISRCount>     isr_table_{};
+    std::array<ChipBase*, kISRCount>     isr_table_{};
 
-    void deferEntry(PeripheralBase& peripheral, uint64_t ticks) {
+    void deferEntry(ChipBase& peripheral, uint64_t ticks) {
         uint64_t deadline = timer_.getCurrentTick() + ticks;
         for (auto& entry : entries_) {
             if (entry.peripheral == &peripheral) {

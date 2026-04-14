@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_TJA1145_HPP
 #define CHIPZ_DEVICES_TJA1145_HPP
 
-#include <chipz/peripheral.hpp>
+#include <chipz/chip.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <functional>
@@ -24,7 +24,7 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically SPI)
  */
-class TJA1145 : public Peripheral<interfaces::SPIInterface> {
+class TJA1145 : public Chip<interfaces::SPIInterface> {
 public:
     enum class State {
         Off,
@@ -49,7 +49,7 @@ public:
     TJA1145(interfaces::SPIInterface& comm,
             const Config& config,
             std::function<uint8_t()> get_spi_transmission_disabled = nullptr)
-        : Peripheral<interfaces::SPIInterface>(comm)
+        : Chip<interfaces::SPIInterface>(comm)
         , status_(Status::Uninitialized)
         , state_(State::Standby)
         , config_(config)
@@ -73,7 +73,7 @@ public:
     {
     }
 
-    // Peripheral interface implementation
+    // Chip interface implementation
     bool initialize() override {
         if (!comm_.isReady()) {
             status_ = Status::Error;

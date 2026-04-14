@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_MAX6675_HPP
 #define CHIPZ_DEVICES_MAX6675_HPP
 
-#include <chipz/peripheral.hpp>
+#include <chipz/chip.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <functional>
@@ -29,7 +29,7 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically SPI)
  */
-class MAX6675 : public Peripheral<interfaces::SPIInterface> {
+class MAX6675 : public Chip<interfaces::SPIInterface> {
 public:
     /**
      * @brief Construct MAX6675 driver with communication interface
@@ -37,7 +37,7 @@ public:
      * @param get_tick Function to get current system tick in milliseconds
      */
     MAX6675(interfaces::SPIInterface& comm, std::function<uint32_t()> get_tick = nullptr)
-        : Peripheral<interfaces::SPIInterface>(comm)
+        : Chip<interfaces::SPIInterface>(comm)
         , status_(Status::Uninitialized)
         , temperature_(0)
         , tick_timer_(0)
@@ -48,7 +48,7 @@ public:
     {
     }
 
-    // Peripheral interface implementation
+    // Chip interface implementation
     bool initialize() override {
         if (!comm_.isReady()) {
             status_ = Status::Error;

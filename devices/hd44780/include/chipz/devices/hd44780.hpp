@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_HD44780_HPP
 #define CHIPZ_DEVICES_HD44780_HPP
 
-#include <chipz/peripheral.hpp>
+#include <chipz/chip.hpp>
 #include <chipz/concepts.hpp>
 #include <cstdint>
 #include <string>
@@ -26,7 +26,7 @@ namespace devices {
  * @tparam CommInterface Communication interface type (typically GPIO)
  */
 template<chipz::concepts::CommunicationInterface CommInterface>
-class HD44780 : public Peripheral<CommInterface> {
+class HD44780 : public Chip<CommInterface> {
 public:
     enum class InterfaceMode {
         Bit4,
@@ -57,9 +57,9 @@ public:
             const Config& config,
             std::function<uint32_t()> get_tick = nullptr,
             std::function<void(uint8_t d4_d7, bool rs, bool e)> update_pins = nullptr)
-        : Peripheral<CommInterface>(comm)
+        : Chip<CommInterface>(comm)
         , config_(config)
-        , status_(PeripheralBase::Status::Uninitialized)
+        , status_(ChipBase::Status::Uninitialized)
         , state_(State::Uninit)
         , transfer_state_(TransferState::Idle)
         , tick_timer_(0)
@@ -103,10 +103,10 @@ public:
 
     }
 
-    // Peripheral interface implementation
+    // Chip interface implementation
     bool initialize() override {
         if (!this->comm_.isReady()) {
-            status_ = PeripheralBase::Status::Error;
+            status_ = ChipBase::Status::Error;
             return false;
         }
 
@@ -134,20 +134,20 @@ public:
             last_tick_ = get_tick_();
         }
 
-        status_ = PeripheralBase::Status::Ready;
+        status_ = ChipBase::Status::Ready;
         return true;
     }
 
     bool reset() override {
-        status_ = PeripheralBase::Status::Uninitialized;
+        status_ = ChipBase::Status::Uninitialized;
         return initialize();
     }
 
     bool isReady() const override {
-        return status_ == PeripheralBase::Status::Ready && this->comm_.isReady() && state_ == State::Idle;
+        return status_ == ChipBase::Status::Ready && this->comm_.isReady() && state_ == State::Idle;
     }
 
-    PeripheralBase::Status getStatus() const override {
+    ChipBase::Status getStatus() const override {
         return status_;
     }
 
@@ -156,7 +156,7 @@ public:
     }
 
     bool main() override {
-        if (status_ != PeripheralBase::Status::Ready) {
+        if (status_ != ChipBase::Status::Ready) {
             return false;
         }
 
@@ -294,7 +294,7 @@ private:
     };
 
     Config config_;
-    PeripheralBase::Status status_;
+    ChipBase::Status status_;
     State state_;
     TransferState transfer_state_;
 
@@ -382,7 +382,7 @@ private:
      */
     void onTransferComplete(bool success) override {
         if (!success) {
-            status_ = PeripheralBase::Status::Error;
+            status_ = ChipBase::Status::Error;
             state_ = State::Idle;
             return;
         }
