@@ -75,7 +75,7 @@ public:
 
     // Chip interface implementation
     bool initialize() override {
-        if (!comm_.isReady()) {
+        if (!get<interfaces::SPIInterface>().isReady()) {
             status_ = Status::Error;
             return false;
         }
@@ -109,7 +109,7 @@ public:
     }
 
     bool isReady() const override {
-        return status_ == Status::Ready && comm_.isReady() &&
+        return status_ == Status::Ready && get<interfaces::SPIInterface>().isReady() &&
                (state_ == State::Normal || state_ == State::Sleep);
     }
 
@@ -329,13 +329,13 @@ private:
      * @brief SPI transfer completion callback
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) override {
+    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
         if (!success) {
             status_ = Status::Error;
             return;
         }
 
-        const uint8_t* rx_buffer = comm_.getRxBuffer();
+        const uint8_t* rx_buffer = get<interfaces::SPIInterface>().getRxBuffer();
 
         // Process callback based on what was requested
         if (system_event_check_requested_) {
@@ -375,10 +375,10 @@ private:
      */
     void requestNormalMode() {
         state_ = State::NormalRequested;
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_MODE_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = MODE_NORMAL;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
@@ -386,10 +386,10 @@ private:
      */
     void requestSleepMode() {
         state_ = State::SleepRequested;
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_MODE_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = MODE_SLEEP;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
@@ -397,10 +397,10 @@ private:
      */
     void checkState() {
         state_check_requested_ = true;
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_MODE_CONTROL << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
@@ -408,10 +408,10 @@ private:
      */
     void requestSystemEventCheck() {
         system_event_check_requested_ = true;
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_SYSTEM_EVENT_STATUS << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
@@ -419,37 +419,37 @@ private:
      */
     void requestTransceiverEventCheck() {
         transceiver_event_check_requested_ = true;
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_TRANSCEIVER_EVENT_STATUS << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
      * @brief Set CAN data rate
      */
     void setDataRate() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_DATA_RATE << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
      * @brief Set CAN control register
      */
     void setCanControl() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_CAN_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0b00110001;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
      * @brief Set event enable register
      */
     void setEventEnable() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         if (config_.enableWakeupOnCan) {
             tx_buffer[0] = (REGISTER_TRANSCEIVER_EVENT_ENABLE << 1) & (~READ_ONLY_BIT);
         }
@@ -457,37 +457,37 @@ private:
             tx_buffer[0] = (0x4C << 1) & (~READ_ONLY_BIT);
         }
         tx_buffer[1] = 0b00000001;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
      * @brief Set CAN extended data format
      */
     void setCanExtendedDataFormat() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_FRAME_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0x80;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
      * @brief Clear system event flag
      */
     void clearSystemEventFlag() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_SYSTEM_EVENT_STATUS << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0x16;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 
     /**
      * @brief Clear transceiver event flag
      */
     void clearTransceiverEventFlag() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_TRANSCEIVER_EVENT_STATUS << 1) & (~READ_ONLY_BIT);
         tx_buffer[1] = 0x33;
-        this->transmit(tx_buffer, 2);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
     }
 };
 

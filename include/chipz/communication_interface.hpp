@@ -82,6 +82,23 @@ public:
     virtual bool transmit(const uint8_t* data, size_t length) = 0;
 
     /**
+     * @brief Async transmit with a duration hint for completion sources
+     *
+     * The default implementation ignores duration_us and delegates to the
+     * immediate transmit(). Interfaces that support deferred completion
+     * (e.g. ParallelInterface<N>) override this to arm their CompletionSources.
+     *
+     * @param data       Data to transmit
+     * @param length     Number of bytes to transmit
+     * @param duration_us Duration hint forwarded to TimerCompletionSource;
+     *                    ignored by other sources and by the default implementation
+     */
+    virtual bool transmit(const uint8_t* data, size_t length, uint32_t duration_us) {
+        (void)duration_us;
+        return transmit(data, length);
+    }
+
+    /**
      * @brief Receive data through the communication interface
      * @param buffer Pointer to buffer where received data will be stored
      * @param length Number of bytes to receive
