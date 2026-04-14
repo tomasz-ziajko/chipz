@@ -60,28 +60,38 @@
 // ---------------------------------------------------------------------------
 
 extern "C" {
+#ifdef HAL_I2C_MODULE_ENABLED
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c1;
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c2;
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c3;
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c4;
+#endif
 
+#ifdef HAL_SPI_MODULE_ENABLED
 __attribute__((weak)) extern SPI_HandleTypeDef hspi1;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi3;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi4;
+#endif
 
+#ifdef HAL_UART_MODULE_ENABLED
 __attribute__((weak)) extern UART_HandleTypeDef huart1;
 __attribute__((weak)) extern UART_HandleTypeDef huart2;
 __attribute__((weak)) extern UART_HandleTypeDef huart3;
 __attribute__((weak)) extern UART_HandleTypeDef huart4;
+#endif
 
+#ifdef HAL_FDCAN_MODULE_ENABLED
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan1;
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
+#endif
 }
 
 // ---------------------------------------------------------------------------
 // I2C bus interfaces
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_I2C_MODULE_ENABLED
 
 chipz::interfaces::I2CInterface g_i2c1{
     [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
@@ -139,9 +149,13 @@ chipz::interfaces::I2CInterface g_i2c4{
     }
 };
 
+#endif // HAL_I2C_MODULE_ENABLED
+
 // ---------------------------------------------------------------------------
 // SPI bus interfaces (no chip select — see file header)
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_SPI_MODULE_ENABLED
 
 chipz::interfaces::SPIInterface g_spi1{
     [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
@@ -167,9 +181,13 @@ chipz::interfaces::SPIInterface g_spi4{
     }
 };
 
+#endif // HAL_SPI_MODULE_ENABLED
+
 // ---------------------------------------------------------------------------
 // UART interfaces
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_UART_MODULE_ENABLED
 
 chipz::interfaces::UARTInterface g_uart1{
     [](const uint8_t* data, uint16_t len) -> int {
@@ -207,6 +225,8 @@ chipz::interfaces::UARTInterface g_uart4{
     }
 };
 
+#endif // HAL_UART_MODULE_ENABLED
+
 // ---------------------------------------------------------------------------
 // FDCAN interfaces
 //
@@ -219,7 +239,9 @@ chipz::interfaces::UARTInterface g_uart4{
 // instantiation as concise as the UART / SPI / I2C entries above.
 // ---------------------------------------------------------------------------
 
-using CANFrame    = chipz::interfaces::CANFrame<64>;
+#ifdef HAL_FDCAN_MODULE_ENABLED
+
+using CANFrame     = chipz::interfaces::CANFrame<64>;
 using CANInterface = chipz::interfaces::CANInterface<>;
 
 static int fdcan_tx(FDCAN_HandleTypeDef* h, const CANFrame& frame) {
@@ -259,3 +281,5 @@ CANInterface g_can2{
     [](const CANFrame& f) -> int { return fdcan_tx(&hfdcan2, f); },
     [](CANFrame& f)       -> int { return fdcan_rx(&hfdcan2, FDCAN_RX_FIFO0, f); }
 };
+
+#endif // HAL_FDCAN_MODULE_ENABLED

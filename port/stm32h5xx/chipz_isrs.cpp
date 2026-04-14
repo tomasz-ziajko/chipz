@@ -62,41 +62,57 @@ extern "C" void chipz_systick_tick();
 
 // HAL handles — __weak so that undefined instances resolve to address 0
 extern "C" {
+#ifdef HAL_I2C_MODULE_ENABLED
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c1;
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c2;
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c3;
+#endif
 
+#ifdef HAL_SPI_MODULE_ENABLED
 __attribute__((weak)) extern SPI_HandleTypeDef hspi1;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi3;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi4;
+#endif
 
+#ifdef HAL_UART_MODULE_ENABLED
 __attribute__((weak)) extern UART_HandleTypeDef huart1;
 __attribute__((weak)) extern UART_HandleTypeDef huart2;
 __attribute__((weak)) extern UART_HandleTypeDef huart3;
 __attribute__((weak)) extern UART_HandleTypeDef huart4;
+#endif
 
+#ifdef HAL_FDCAN_MODULE_ENABLED
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan1;
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
+#endif
 }
 
-// chipz interface objects — always defined in config.cpp
+// chipz interface objects — defined in config.cpp, guarded by the same macros
+#ifdef HAL_I2C_MODULE_ENABLED
 extern chipz::interfaces::I2CInterface g_i2c1;
 extern chipz::interfaces::I2CInterface g_i2c2;
 extern chipz::interfaces::I2CInterface g_i2c3;
+#endif
 
+#ifdef HAL_SPI_MODULE_ENABLED
 extern chipz::interfaces::SPIInterface g_spi1;
 extern chipz::interfaces::SPIInterface g_spi2;
 extern chipz::interfaces::SPIInterface g_spi3;
 extern chipz::interfaces::SPIInterface g_spi4;
+#endif
 
+#ifdef HAL_UART_MODULE_ENABLED
 extern chipz::interfaces::UARTInterface g_uart1;
 extern chipz::interfaces::UARTInterface g_uart2;
 extern chipz::interfaces::UARTInterface g_uart3;
 extern chipz::interfaces::UARTInterface g_uart4;
+#endif
 
+#ifdef HAL_FDCAN_MODULE_ENABLED
 extern chipz::interfaces::CANInterface<> g_can1;
 extern chipz::interfaces::CANInterface<> g_can2;
+#endif
 
 extern "C" {
 
@@ -143,39 +159,47 @@ void EXTI15_IRQHandler() { HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_15); g_core.onIRQ(I
 // I2C IRQ handlers
 // ---------------------------------------------------------------------------
 
+#ifdef HAL_I2C_MODULE_ENABLED
 void I2C1_EV_IRQHandler() { HAL_I2C_EV_IRQHandler(&hi2c1); }
 void I2C1_ER_IRQHandler() { HAL_I2C_ER_IRQHandler(&hi2c1); }
 void I2C2_EV_IRQHandler() { HAL_I2C_EV_IRQHandler(&hi2c2); }
 void I2C2_ER_IRQHandler() { HAL_I2C_ER_IRQHandler(&hi2c2); }
 void I2C3_EV_IRQHandler() { HAL_I2C_EV_IRQHandler(&hi2c3); }
 void I2C3_ER_IRQHandler() { HAL_I2C_ER_IRQHandler(&hi2c3); }
+#endif
 
 // ---------------------------------------------------------------------------
 // SPI IRQ handlers
 // ---------------------------------------------------------------------------
 
+#ifdef HAL_SPI_MODULE_ENABLED
 void SPI1_IRQHandler() { HAL_SPI_IRQHandler(&hspi1); }
 void SPI2_IRQHandler() { HAL_SPI_IRQHandler(&hspi2); }
 void SPI3_IRQHandler() { HAL_SPI_IRQHandler(&hspi3); }
 void SPI4_IRQHandler() { HAL_SPI_IRQHandler(&hspi4); }
+#endif
 
 // ---------------------------------------------------------------------------
 // UART IRQ handlers
 // ---------------------------------------------------------------------------
 
+#ifdef HAL_UART_MODULE_ENABLED
 void USART1_IRQHandler() { HAL_UART_IRQHandler(&huart1); }
 void USART2_IRQHandler() { HAL_UART_IRQHandler(&huart2); }
 void USART3_IRQHandler() { HAL_UART_IRQHandler(&huart3); }
 void UART4_IRQHandler()  { HAL_UART_IRQHandler(&huart4); }
+#endif
 
 // ---------------------------------------------------------------------------
 // FDCAN IRQ handlers — each instance has two interrupt lines (IT0, IT1)
 // ---------------------------------------------------------------------------
 
+#ifdef HAL_FDCAN_MODULE_ENABLED
 void FDCAN1_IT0_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan1); }
 void FDCAN1_IT1_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan1); }
 void FDCAN2_IT0_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan2); }
 void FDCAN2_IT1_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan2); }
+#endif
 
 } // extern "C"
 
@@ -187,6 +211,8 @@ void FDCAN2_IT1_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan2); }
 // the handle is properly defined; when it is an undefined weak symbol it
 // resolves to address 0 and the branch is safely skipped.
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_I2C_MODULE_ENABLED
 
 extern "C" void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef* h) {
     if (&hi2c1 && h == &hi2c1) { g_i2c1.notifyTransferComplete(true); return; }
@@ -224,9 +250,13 @@ extern "C" void HAL_I2C_AbortCpltCallback(I2C_HandleTypeDef* h) {
     if (&hi2c3 && h == &hi2c3) { g_i2c3.notifyError(); return; }
 }
 
+#endif // HAL_I2C_MODULE_ENABLED
+
 // ---------------------------------------------------------------------------
 // HAL SPI weak callback overrides
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_SPI_MODULE_ENABLED
 
 extern "C" void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef* h) {
     if (&hspi1 && h == &hspi1) { g_spi1.notifyTransferComplete(true); return; }
@@ -256,9 +286,13 @@ extern "C" void HAL_SPI_ErrorCallback(SPI_HandleTypeDef* h) {
     if (&hspi4 && h == &hspi4) { g_spi4.notifyError(); return; }
 }
 
+#endif // HAL_SPI_MODULE_ENABLED
+
 // ---------------------------------------------------------------------------
 // HAL UART weak callback overrides
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_UART_MODULE_ENABLED
 
 extern "C" void HAL_UART_TxCpltCallback(UART_HandleTypeDef* h) {
     if (&huart1 && h == &huart1) { g_uart1.notifyTxComplete(); return; }
@@ -288,6 +322,8 @@ extern "C" void HAL_UART_AbortCpltCallback(UART_HandleTypeDef* h) {
     if (&huart4 && h == &huart4) { g_uart4.notifyError(); return; }
 }
 
+#endif // HAL_UART_MODULE_ENABLED
+
 // ---------------------------------------------------------------------------
 // HAL FDCAN weak callback overrides
 //
@@ -296,6 +332,8 @@ extern "C" void HAL_UART_AbortCpltCallback(UART_HandleTypeDef* h) {
 // location the RxFunction actually reads from is determined by the lambda in
 // config.cpp (e.g. FDCAN_RX_FIFO0 or FDCAN_RX_FIFO1).
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_FDCAN_MODULE_ENABLED
 
 extern "C" void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef* h, uint32_t) {
     if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyTxComplete(); return; }
@@ -321,3 +359,5 @@ extern "C" void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef* h, uint32_t) 
     if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyError(); return; }
     if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyError(); return; }
 }
+
+#endif // HAL_FDCAN_MODULE_ENABLED
