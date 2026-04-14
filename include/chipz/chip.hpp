@@ -8,13 +8,47 @@
 #include "communication_interface.hpp"
 #include "concepts.hpp"
 #include "isr_source.hpp"
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace chipz {
+
+namespace detail {
+
+// --- type_index_v: index of T in pack Ts... ---
+template<typename T, typename... Ts>
+struct type_index;
+
+template<typename T, typename... Rest>
+struct type_index<T, T, Rest...> : std::integral_constant<size_t, 0> {};
+
+template<typename T, typename First, typename... Rest>
+struct type_index<T, First, Rest...>
+    : std::integral_constant<size_t, 1 + type_index<T, Rest...>::value> {};
+
+template<typename T, typename... Ts>
+constexpr size_t type_index_v = type_index<T, Ts...>::value;
+
+// --- all_unique_v: true when all types in pack are distinct ---
+template<typename T, typename... Ts>
+constexpr bool contains_v = (std::is_same_v<T, Ts> || ...);
+
+template<typename... Ts>
+struct all_unique : std::true_type {};
+
+template<typename T, typename... Rest>
+struct all_unique<T, Rest...>
+    : std::bool_constant<!contains_v<T, Rest...> && all_unique<Rest...>::value> {};
+
+template<typename... Ts>
+constexpr bool all_unique_v = all_unique<Ts...>::value;
+
+} // namespace detail
 
 /**
  * @brief Non-template base class for all externally-connected chips
@@ -28,15 +62,17 @@ namespace chipz {
  * and unregisters upon destruction.
  *
  * COMM INTERRUPT ROUTING:
- * Core calls getCommInterface() at add() time to register the chip's
- * communication interface. When an interrupt fires, Core looks up which
- * chip is active on that bus and calls onInterrupt() on it.
+ * Core calls getCommInterfaces() at add() time to register all of the chip's
+ * communication interfaces. When an interrupt fires on any of them, Core
+ * looks up which chip is active on that bus and calls onInterrupt() on it,
+ * passing a reference to the specific interface that fired.
  *
  * SCHEDULING:
  * Core injects defer and claim-bus callbacks at add() time. Drivers call
  * defer_ms_ / defer_us_ from main() to skip the next N ms/µs. The
- * claim_bus_fn_ is invoked by Chip<CommInterface>::transmit() /
- * receive() wrappers before each transfer.
+ * claim-bus callback is injected per interface via setClaimBusCallback()
+ * and is invoked by Chip<CommInterfaces...>::transmit() / receive() wrappers
+ * before each transfer.
  */
 class ChipBase {
 public:
@@ -70,26 +106,31 @@ public:
     virtual uint8_t getDefaultPriority() const { return 128; }
 
     /**
-     * @brief Get the communication interface used by this chip
+     * @brief Get all communication interfaces used by this chip
      *
-     * Called by Core::add() to register the interface for interrupt routing.
-     * Returns nullptr for chips without a communication interface.
+     * Called by Core::add() to register each interface for interrupt routing.
+     * Returns an empty span for chips with no communication interfaces.
      *
-     * @return Pointer to communication interface, or nullptr
+     * @return Span over the chip's communication interfaces
      */
-    virtual CommunicationInterface* getCommInterface() { return nullptr; }
+    virtual std::span<CommunicationInterface*> getCommInterfaces() { return {}; }
 
     /**
      * @brief Handle a routed communication interrupt
      *
-     * Called by Core when a hardware interrupt fires on this chip's
-     * communication interface. Chip<CommInterface> overrides this and
+     * Called by Core when a hardware interrupt fires on one of this chip's
+     * communication interfaces. The @p which parameter identifies the
+     * interface that fired. Chip<CommInterfaces...> overrides this and
      * dispatches to onTransferComplete / onError / onArbitrationLost.
      *
+     * @param which   The interface whose interrupt fired
      * @param type    Type of interrupt that fired
      * @param success True for TransferComplete with no error
      */
-    virtual void onInterrupt(CommunicationInterface::InterruptType type, bool success) {
+    virtual void onInterrupt(CommunicationInterface& which,
+                             CommunicationInterface::InterruptType type,
+                             bool success) {
+        (void)which;
         (void)type;
         (void)success;
     }
@@ -140,14 +181,19 @@ public:
     }
 
     /**
-     * @brief Inject claim-bus callback from Core
+     * @brief Inject a claim-bus callback for a specific communication interface
      *
-     * Called by Chip<CommInterface>::transmit() / receive() before
-     * each transfer to inform Core which chip is active on the bus.
-     * This lets Core route the next transfer-complete interrupt correctly.
+     * Called by Core::add() once per registered interface. The Chip<> template
+     * override stores the callback indexed by interface, and invokes it before
+     * each transmit() / receive() to tell Core which chip is active on that bus.
+     *
+     * @param comm Interface to associate the callback with
+     * @param fn   Callback to invoke before each transfer on @p comm
      */
-    void setClaimBusCallback(std::function<void()> fn) {
-        claim_bus_fn_ = std::move(fn);
+    virtual void setClaimBusCallback(CommunicationInterface* comm,
+                                     std::function<void()> fn) {
+        (void)comm;
+        (void)fn;
     }
 
     // -------------------------------------------------------------------------
@@ -220,7 +266,6 @@ protected:
 
     std::function<void(uint32_t)> defer_ms_;
     std::function<void(uint32_t)> defer_us_;
-    std::function<void()>         claim_bus_fn_;
 
 private:
     static std::vector<ChipBase*>& getRegistry() {
@@ -244,118 +289,184 @@ private:
 };
 
 /**
- * @brief Template middle layer binding a chip to its communication interface
+ * @brief Template middle layer binding a chip to one or more communication interfaces
  *
- * Inherits ChipBase and owns a reference to the communication interface.
- * Device drivers inherit from this class with their specific interface type.
+ * Inherits ChipBase and owns references to all communication interfaces.
+ * Device drivers inherit from this class, specifying every bus they use.
  *
  * Provides:
- * - transmit() / receive() wrappers that claim the bus with Core before
- *   forwarding to the underlying comm interface
- * - Per-interrupt-type virtual handlers (onTransferComplete, onError,
- *   onArbitrationLost) that concrete drivers override as needed
- * - getCommInterface() and onInterrupt() implementations for Core routing
+ * - get<T>()                  — access an interface by type
+ * - transmit<T>() / receive<T>() — bus-selecting transfer wrappers that
+ *                               claim the bus with Core before forwarding
+ * - setConnection<T>()        — register the per-interface connection ID
+ * - getCommInterfaces()       — returns all interfaces for Core registration
+ * - Per-interrupt-type virtuals (onTransferComplete, onError,
+ *   onArbitrationLost) with the firing interface passed as the first argument
  *
- * @tparam CommInterface Communication interface type (must satisfy chipz::concepts::CommunicationInterface)
+ * All interface types in the pack must be distinct.
+ *
+ * @tparam CommInterfaces Communication interface types
+ *         (each must satisfy chipz::concepts::CommunicationInterface)
  */
-template<chipz::concepts::CommunicationInterface CommInterface>
+template<chipz::concepts::CommunicationInterface... CommInterfaces>
 class Chip : public ChipBase {
+    static_assert(detail::all_unique_v<CommInterfaces...>,
+                  "Chip: all communication interface types must be distinct");
+
 public:
-    CommunicationInterface* getCommInterface() override {
-        return &comm_;
+    /**
+     * @brief Access a communication interface by type
+     * @tparam T Interface type (must be one of CommInterfaces)
+     */
+    template<typename T>
+    T& get() {
+        return *std::get<detail::type_index_v<T, CommInterfaces...>>(comms_);
     }
 
-    void onInterrupt(CommunicationInterface::InterruptType type, bool success) override {
+    template<typename T>
+    const T& get() const {
+        return *std::get<detail::type_index_v<T, CommInterfaces...>>(comms_);
+    }
+
+    std::span<CommunicationInterface*> getCommInterfaces() override {
+        return comm_ptrs_;
+    }
+
+    void onInterrupt(CommunicationInterface& which,
+                     CommunicationInterface::InterruptType type,
+                     bool success) override {
         using IT = CommunicationInterface::InterruptType;
         switch (type) {
-            case IT::TransferComplete: onTransferComplete(success); break;
-            case IT::Error:            onError();                   break;
-            case IT::ArbitrationLost:  onArbitrationLost();         break;
+            case IT::TransferComplete: onTransferComplete(which, success); break;
+            case IT::Error:            onError(which);                     break;
+            case IT::ArbitrationLost:  onArbitrationLost(which);           break;
+        }
+    }
+
+    void setClaimBusCallback(CommunicationInterface* comm,
+                             std::function<void()> fn) override {
+        for (size_t i = 0; i < N; ++i) {
+            if (comm_ptrs_[i] == comm) {
+                claim_bus_fns_[i] = std::move(fn);
+                return;
+            }
         }
     }
 
 protected:
-    CommInterface& comm_;
-    CommunicationInterface::ConnectionId conn_id_{CommunicationInterface::kInvalidConnection};
-
-    explicit Chip(CommInterface& comm) : comm_(comm) {}
+    explicit Chip(CommInterfaces&... comms)
+        : comms_{&comms...}
+    {
+        conn_ids_.fill(CommunicationInterface::kInvalidConnection);
+        initCommPtrs(std::index_sequence_for<CommInterfaces...>{});
+    }
 
     /**
-     * @brief Register this chip's connection with its communication interface
+     * @brief Register this chip's connection on a specific interface
      *
      * Call from initialize() with the ConnectionId returned by the interface's
      * registerConnection() method. From that point, selectConnection() is
-     * called automatically before every transmit() and receive().
+     * called automatically before every transmit<T>() and receive<T>() on
+     * that interface.
+     *
+     * @tparam T Interface type
+     * @param  id ConnectionId returned by T::registerConnection()
      */
+    template<typename T>
     void setConnection(CommunicationInterface::ConnectionId id) {
-        conn_id_ = id;
+        conn_ids_[detail::type_index_v<T, CommInterfaces...>] = id;
     }
 
     /**
-     * @brief Transmit data — claims the bus with Core before forwarding
+     * @brief Transmit data on the selected interface
      *
-     * Returns false immediately if the bus is busy (another chip's
-     * transfer is in flight). In that case the driver should return from
-     * main() and retry next cycle.
+     * Claims the bus with Core before forwarding. Returns false immediately
+     * if the bus is busy — the driver should retry next cycle.
      *
-     * @param data   Data to transmit
-     * @param length Number of bytes
-     * @return true if transmission started, false if bus busy or error
+     * @tparam T     Interface type to transmit on
+     * @param  data   Data to transmit
+     * @param  length Number of bytes
      */
+    template<typename T>
     bool transmit(const uint8_t* data, size_t length) {
-        if (!comm_.isReady()) {
-            return false;
-        }
-        if (conn_id_ != CommunicationInterface::kInvalidConnection) {
-            comm_.selectConnection(conn_id_);
-        }
-        if (claim_bus_fn_) {
-            claim_bus_fn_();
-        }
-        return comm_.transmit(data, length);
+        constexpr size_t idx = detail::type_index_v<T, CommInterfaces...>;
+        auto& comm = get<T>();
+        if (!comm.isReady()) return false;
+        if (conn_ids_[idx] != CommunicationInterface::kInvalidConnection)
+            comm.selectConnection(conn_ids_[idx]);
+        if (claim_bus_fns_[idx]) claim_bus_fns_[idx]();
+        return comm.transmit(data, length);
     }
 
     /**
-     * @brief Receive data — claims the bus with Core before forwarding
+     * @brief Async transmit with duration hint — arms CompletionSources on the interface
      *
-     * Returns false immediately if the bus is busy.
+     * Identical to transmit<T>(data, length) in terms of bus claiming, but
+     * forwards duration_us to the interface so CompletionSources can be armed.
+     * On interfaces without CompletionSources this is equivalent to the
+     * immediate overload.
      *
-     * @param buffer Buffer to receive into
-     * @param length Number of bytes
-     * @return true if reception started, false if bus busy or error
+     * @tparam T          Interface type to transmit on
+     * @param  data        Data to transmit
+     * @param  length      Number of bytes
+     * @param  duration_us Duration hint for TimerCompletionSource (µs)
      */
+    template<typename T>
+    bool transmit(const uint8_t* data, size_t length, uint32_t duration_us) {
+        constexpr size_t idx = detail::type_index_v<T, CommInterfaces...>;
+        auto& comm = get<T>();
+        if (!comm.isReady()) return false;
+        if (conn_ids_[idx] != CommunicationInterface::kInvalidConnection)
+            comm.selectConnection(conn_ids_[idx]);
+        if (claim_bus_fns_[idx]) claim_bus_fns_[idx]();
+        return comm.transmit(data, length, duration_us);
+    }
+
+    /**
+     * @brief Receive data on the selected interface
+     *
+     * Claims the bus with Core before forwarding. Returns false if busy.
+     *
+     * @tparam T      Interface type to receive on
+     * @param  buffer Buffer to receive into
+     * @param  length Number of bytes
+     */
+    template<typename T>
     bool receive(uint8_t* buffer, size_t length) {
-        if (!comm_.isReady()) {
-            return false;
-        }
-        if (conn_id_ != CommunicationInterface::kInvalidConnection) {
-            comm_.selectConnection(conn_id_);
-        }
-        if (claim_bus_fn_) {
-            claim_bus_fn_();
-        }
-        return comm_.receive(buffer, length);
+        constexpr size_t idx = detail::type_index_v<T, CommInterfaces...>;
+        auto& comm = get<T>();
+        if (!comm.isReady()) return false;
+        if (conn_ids_[idx] != CommunicationInterface::kInvalidConnection)
+            comm.selectConnection(conn_ids_[idx]);
+        if (claim_bus_fns_[idx]) claim_bus_fns_[idx]();
+        return comm.receive(buffer, length);
     }
 
     // -------------------------------------------------------------------------
-    // Per-interrupt-type virtuals — override in concrete drivers as needed
+    // Per-interrupt-type virtuals — override in concrete drivers as needed.
+    // @p which identifies which interface fired.
     // -------------------------------------------------------------------------
 
-    /**
-     * @brief Called by Core when a transfer-complete interrupt is routed here
-     * @param success true if the transfer succeeded
-     */
-    virtual void onTransferComplete(bool success) { (void)success; }
+    virtual void onTransferComplete(CommunicationInterface& which, bool success) {
+        (void)which; (void)success;
+    }
 
-    /**
-     * @brief Called by Core when a bus/protocol error interrupt is routed here
-     */
-    virtual void onError() {}
+    virtual void onError(CommunicationInterface& which) { (void)which; }
 
-    /**
-     * @brief Called by Core when an I2C arbitration-lost interrupt is routed here
-     */
-    virtual void onArbitrationLost() {}
+    virtual void onArbitrationLost(CommunicationInterface& which) { (void)which; }
+
+private:
+    static constexpr size_t N = sizeof...(CommInterfaces);
+
+    std::tuple<CommInterfaces*...>                               comms_;
+    std::array<CommunicationInterface*, N>                       comm_ptrs_{};
+    std::array<CommunicationInterface::ConnectionId, N>          conn_ids_{};
+    std::array<std::function<void()>, N>                         claim_bus_fns_{};
+
+    template<size_t... Is>
+    void initCommPtrs(std::index_sequence<Is...>) {
+        ((comm_ptrs_[Is] = std::get<Is>(comms_)), ...);
+    }
 };
 
 } // namespace chipz

@@ -91,12 +91,12 @@ public:
 
     // Chip interface implementation
     bool initialize() override {
-        if (!comm_.isReady()) {
+        if (!get<interfaces::I2CInterface>().isReady()) {
             status_ = Status::Error;
             return false;
         }
 
-        setConnection(comm_.registerConnection(I2C_ADDRESS));
+        setConnection<interfaces::I2CInterface>(get<interfaces::I2CInterface>().registerConnection(I2C_ADDRESS));
 
         // Reset state machine
         state_ = State::PreInit;
@@ -119,7 +119,7 @@ public:
         }
 
         // Start in PREINIT state - query status register to check oscillator state
-        if (!this->receive(comm_.getRxBuffer(), STATUS_REGISTER_LENGTH)) {
+        if (!this->receive<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getRxBuffer(), STATUS_REGISTER_LENGTH)) {
             status_ = Status::Error;
             return false;
         }
@@ -134,7 +134,7 @@ public:
     }
 
     bool isReady() const override {
-        return status_ == Status::Ready && comm_.isReady() && state_ == State::Idle;
+        return status_ == Status::Ready && get<interfaces::I2CInterface>().isReady() && state_ == State::Idle;
     }
 
     Status getStatus() const override {
@@ -160,9 +160,9 @@ public:
             case State::ClearingOSF:
                 // Clear the OSF (Oscillator Stop Flag) in Control/Status register (0x0F, bit 7)
                 // OSF must be explicitly cleared by writing 0 to bit 7
-                comm_.getTxBuffer()[0] = control_;
-                comm_.getTxBuffer()[1] = control_status_ & 0x7F; // Clear OSF bit (bit 7)
-                this->transmit(comm_.getTxBuffer(), 2);
+                get<interfaces::I2CInterface>().getTxBuffer()[0] = control_;
+                get<interfaces::I2CInterface>().getTxBuffer()[1] = control_status_ & 0x7F; // Clear OSF bit (bit 7)
+                this->transmit<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getTxBuffer(), 2);
                 osf_clear_pending_ = true;
                 // Stay in CLEARING_OSF state (transition to IDLE happens in callback)
                 break;
@@ -173,7 +173,7 @@ public:
                     time_update_request_ = false;
                     time_update_waiting_for_interrupt_ = true;
                     serializeCurrentTime();
-                    this->transmit(comm_.getTxBuffer(), TIME_REGISTER_LENGTH);
+                    this->transmit<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getTxBuffer(), TIME_REGISTER_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -182,7 +182,7 @@ public:
                     alarm1_update_request_ = false;
                     alarm1_update_waiting_for_interrupt_ = true;
                     serializeAlarm1();
-                    this->transmit(comm_.getTxBuffer(), ALARM1_LENGTH);
+                    this->transmit<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getTxBuffer(), ALARM1_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -191,7 +191,7 @@ public:
                     alarm2_update_request_ = false;
                     alarm2_update_waiting_for_interrupt_ = true;
                     serializeAlarm2();
-                    this->transmit(comm_.getTxBuffer(), ALARM2_LENGTH);
+                    this->transmit<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getTxBuffer(), ALARM2_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -199,7 +199,7 @@ public:
                 if (alarm1_read_request_) {
                     alarm1_read_request_ = false;
                     alarm1_read_in_progress_ = true;
-                    this->receive(comm_.getRxBuffer(), ALARM1_LENGTH);
+                    this->receive<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getRxBuffer(), ALARM1_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -207,7 +207,7 @@ public:
                 if (alarm2_read_request_) {
                     alarm2_read_request_ = false;
                     alarm2_read_in_progress_ = true;
-                    this->receive(comm_.getRxBuffer(), ALARM2_LENGTH);
+                    this->receive<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getRxBuffer(), ALARM2_LENGTH);
                     state_ = State::Running;
                     return true;
                 }
@@ -221,14 +221,14 @@ public:
                     // Read current time at specified period (unless paused)
                     if (!time_read_paused_ && (tick_timer_ % TIME_READ_PERIOD_MS == 0)) {
                         time_read_in_progress_ = true;
-                        this->receive(comm_.getRxBuffer(), TIME_REGISTER_LENGTH);
+                        this->receive<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getRxBuffer(), TIME_REGISTER_LENGTH);
                         state_ = State::Running;
                     }
 
                     // Read status registers at specified period (offset by 50ms to avoid collision)
                     if ((tick_timer_ + 50) % STATUS_READ_PERIOD_MS == 0) {
                         status_read_in_progress_ = true;
-                        this->receive(comm_.getRxBuffer(), STATUS_REGISTER_LENGTH);
+                        this->receive<interfaces::I2CInterface>(get<interfaces::I2CInterface>().getRxBuffer(), STATUS_REGISTER_LENGTH);
                         state_ = State::Running;
                     }
 
@@ -519,7 +519,7 @@ private:
      * @brief Called by Core when a transfer-complete interrupt is routed here
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) override {
+    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
         if (!success) {
             status_ = Status::Error;
             state_ = State::Idle;
@@ -591,7 +591,7 @@ private:
      * @brief Serialize current time to TX buffer in BCD format
      */
     void serializeCurrentTime() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::I2CInterface>().getTxBuffer();
 
         // Seconds (bits 6:4 = tens, bits 3:0 = ones)
         tx_buffer[0] = ((current_time_.tm_sec / 10) << 4) & 0x70;
@@ -627,7 +627,7 @@ private:
      * @brief Deserialize current time from RX buffer (BCD format)
      */
     void deserializeCurrentTime() {
-        const uint8_t* rx_buffer = comm_.getRxBuffer();
+        const uint8_t* rx_buffer = get<interfaces::I2CInterface>().getRxBuffer();
 
         // Seconds - BCD to decimal
         current_time_.tm_sec = ((rx_buffer[0] & 0x70) >> 4) * 10;
@@ -666,7 +666,7 @@ private:
      * @brief Serialize alarm 1 to TX buffer
      */
     void serializeAlarm1() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::I2CInterface>().getTxBuffer();
         tx_buffer[0] = alarm1_seconds_;
         tx_buffer[1] = alarm1_minutes_;
         tx_buffer[2] = alarm1_hours_;
@@ -677,7 +677,7 @@ private:
      * @brief Deserialize alarm 1 from RX buffer
      */
     void deserializeAlarm1() {
-        const uint8_t* rx_buffer = comm_.getRxBuffer();
+        const uint8_t* rx_buffer = get<interfaces::I2CInterface>().getRxBuffer();
         alarm1_seconds_ = rx_buffer[0];
         alarm1_minutes_ = rx_buffer[1];
         alarm1_hours_ = rx_buffer[2];
@@ -688,7 +688,7 @@ private:
      * @brief Serialize alarm 2 to TX buffer
      */
     void serializeAlarm2() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::I2CInterface>().getTxBuffer();
         tx_buffer[0] = alarm2_minutes_;
         tx_buffer[1] = alarm2_hours_;
         tx_buffer[2] = alarm2_day_date_;
@@ -698,7 +698,7 @@ private:
      * @brief Deserialize alarm 2 from RX buffer
      */
     void deserializeAlarm2() {
-        const uint8_t* rx_buffer = comm_.getRxBuffer();
+        const uint8_t* rx_buffer = get<interfaces::I2CInterface>().getRxBuffer();
         alarm2_minutes_ = rx_buffer[0];
         alarm2_hours_ = rx_buffer[1];
         alarm2_day_date_ = rx_buffer[2];
@@ -708,7 +708,7 @@ private:
      * @brief Deserialize status registers from RX buffer
      */
     void deserializeStatus() {
-        const uint8_t* rx_buffer = comm_.getRxBuffer();
+        const uint8_t* rx_buffer = get<interfaces::I2CInterface>().getRxBuffer();
 
         // Control register (0x0E)
         control_ = rx_buffer[0];

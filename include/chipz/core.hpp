@@ -120,9 +120,8 @@ public:
             }
         );
 
-        // Register comm interface and inject claim-bus callback
-        CommunicationInterface* comm = peripheral.getCommInterface();
-        if (comm) {
+        // Register all comm interfaces and inject per-interface claim-bus callbacks
+        for (auto* comm : peripheral.getCommInterfaces()) {
             // Register the comm interface if this is its first peripheral
             bool already_registered = false;
             for (auto& entry : comm_entries_) {
@@ -139,8 +138,8 @@ public:
                 comm_entries_.push_back({comm, nullptr});
             }
 
-            // Inject claim-bus: records this peripheral as active on the bus
-            peripheral.setClaimBusCallback([this, comm, &peripheral]() {
+            // Inject claim-bus: records this peripheral as active on this bus
+            peripheral.setClaimBusCallback(comm, [this, comm, &peripheral]() {
                 for (auto& entry : comm_entries_) {
                     if (entry.comm == comm) {
                         entry.active_peripheral = &peripheral;
@@ -225,6 +224,7 @@ public:
             if (comm_entry.comm->hasInterruptPending()) {
                 if (comm_entry.active_peripheral) {
                     comm_entry.active_peripheral->onInterrupt(
+                        *comm_entry.comm,
                         comm_entry.comm->getPendingInterruptType(),
                         comm_entry.comm->getInterruptSuccess()
                     );

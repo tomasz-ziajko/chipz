@@ -9,6 +9,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 
 namespace chipz::concepts {
 
@@ -23,6 +24,17 @@ concept CommunicationInterface = requires(T t, const uint8_t* data, uint8_t* buf
     { t.getPendingInterruptType() }        -> std::same_as<chipz::CommunicationInterface::InterruptType>;
     { t.getInterruptSuccess() }            -> std::same_as<bool>;
     { t.clearInterrupt() };
+};
+
+/**
+ * @brief Concept satisfied by any type usable as a CompletionSource
+ *
+ * Built-in implementations: CompletionSource::Timer, CompletionSource::External
+ */
+template<typename T>
+concept CompletionSource = requires(T t, uint32_t d, std::function<void()> cb) {
+    t.arm(d, std::move(cb));
+    t.cancel();
 };
 
 } // namespace chipz::concepts

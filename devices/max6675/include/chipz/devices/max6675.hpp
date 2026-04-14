@@ -50,7 +50,7 @@ public:
 
     // Chip interface implementation
     bool initialize() override {
-        if (!comm_.isReady()) {
+        if (!get<interfaces::SPIInterface>().isReady()) {
             status_ = Status::Error;
             return false;
         }
@@ -75,7 +75,7 @@ public:
     }
 
     bool isReady() const override {
-        return status_ == Status::Ready && comm_.isReady();
+        return status_ == Status::Ready && get<interfaces::SPIInterface>().isReady();
     }
 
     Status getStatus() const override {
@@ -112,7 +112,7 @@ public:
             transfer_in_progress_ = true;
 
             // Start SPI transfer (read 2 bytes)
-            if (!this->receive(comm_.getRxBuffer(), SPI_TRANSFER_LENGTH)) {
+            if (!this->receive<interfaces::SPIInterface>(get<interfaces::SPIInterface>().getRxBuffer(), SPI_TRANSFER_LENGTH)) {
                 transfer_in_progress_ = false;
                 status_ = Status::Error;
                 return false;
@@ -179,7 +179,7 @@ private:
      * @brief SPI transfer completion callback
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) override {
+    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
         transfer_in_progress_ = false;
 
         if (!success) {
@@ -206,7 +206,7 @@ private:
      * - Temperature (°C) = 12-bit value * 0.25
      */
     void deserializeSpiData() {
-        const uint8_t* rx_buffer = comm_.getRxBuffer();
+        const uint8_t* rx_buffer = get<interfaces::SPIInterface>().getRxBuffer();
 
         // Extract 12-bit temperature value
         // rx_buffer[0] contains D15-D8 (bits 7:0 = D15:D8)

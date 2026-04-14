@@ -55,7 +55,7 @@ public:
 
     // Chip interface implementation
     bool initialize() override {
-        if (!comm_.isReady()) {
+        if (!get<interfaces::SPIInterface>().isReady()) {
             status_ = Status::Error;
             return false;
         }
@@ -86,7 +86,7 @@ public:
     }
 
     bool isReady() const override {
-        return status_ == Status::Ready && comm_.isReady() && clock_started_;
+        return status_ == Status::Ready && get<interfaces::SPIInterface>().isReady() && clock_started_;
     }
 
     Status getStatus() const override {
@@ -281,7 +281,7 @@ private:
      * @brief SPI transfer completion callback
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(bool success) override {
+    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
         if (!success) {
             status_ = Status::Error;
             return;
@@ -309,7 +309,7 @@ private:
      * @brief Update timekeep registers (write current time to RTC)
      */
     void updateTimekeep() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_WRITE;
         tx_buffer[1] = TIME_AND_DATE_START_ADDRESS;
@@ -360,26 +360,26 @@ private:
         // Control register - Enable ALARM 0
         tx_buffer[10] = 0x10;
 
-        this->transmit(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
     }
 
     /**
      * @brief Request current time transmission (read from RTC)
      */
     void requestCurrentTimeTransmission() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_READ;
         tx_buffer[1] = TIME_AND_DATE_START_ADDRESS;
 
-        this->transmit(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
     }
 
     /**
      * @brief Decode timekeep data from RX buffer
      */
     void decodeTimekeep() {
-        const uint8_t* rx_buffer = comm_.getRxBuffer();
+        const uint8_t* rx_buffer = get<interfaces::SPIInterface>().getRxBuffer();
 
         // Skip hundreds of seconds register (index 2)
 
@@ -418,7 +418,7 @@ private:
      * @brief Build alarm configuration and send to RTC
      */
     void buildAlarm() {
-        uint8_t* tx_buffer = comm_.getTxBuffer();
+        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_WRITE;
         tx_buffer[1] = ALARM0_START_ADDRESS;
@@ -462,7 +462,7 @@ private:
         tx_buffer[7] = ((tx_buffer[7] << 4) & 0x10);
         tx_buffer[7] |= ((month % 10) & 0x0F);
 
-        this->transmit(tx_buffer, ALARM0_SEND_TRANSMISSION_LENGTH);
+        this->transmit<interfaces::SPIInterface>(tx_buffer, ALARM0_SEND_TRANSMISSION_LENGTH);
     }
 };
 

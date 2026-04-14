@@ -6,10 +6,8 @@
 #define CHIPZ_DEVICES_HD44780_HPP
 
 #include <chipz/chip.hpp>
-#include <chipz/concepts.hpp>
 #include <cstdint>
 #include <string>
-#include <functional>
 
 namespace chipz {
 namespace devices {
@@ -17,22 +15,28 @@ namespace devices {
 /**
  * @brief Driver for HD44780 LCD Controller
  *
- * The HD44780 is a popular LCD controller used in character LCDs.
- * This implementation supports 4-bit mode via GPIO expander (e.g., PCF8574).
+ * Drives an HD44780-compatible LCD in 4-bit mode through any CommunicationInterface
+ * that supports the timed transmit overload — typically a ParallelInterface<6>.
  *
- * This implementation mirrors the state machine design from the C version,
- * providing full compatibility with embedded systems requirements.
+ * All bus timing is delegated to the interface's CompletionSources, so the driver is
+ * completely agnostic to whether the bus is direct GPIO or an I2C GPIO expander:
  *
- * @tparam CommInterface Communication interface type (typically GPIO)
+ *   - Direct GPIO + TimerCompletionSource: timer enforces E-pulse and command delays
+ *   - I2C expander + ExternalCompletionSource: driver waits for each I2C transaction
+ *   - Both combined: barrier fires when the slower of the two completes
+ *
+ * Expected bus bit layout (ParallelInterface<6> or equivalent):
+ *   bits [3:0]  D4–D7 (nibble data, high nibble transmitted first)
+ *   bit  4      RS    (0 = command register, 1 = character data)
+ *   bit  5      E     (enable; HD44780 latches data on falling edge)
+ *
+ * Power-on delay is requested through Core's defer_ms callback if available.
+ *
+ * @tparam CommInterface Communication interface type (must support timed transmit)
  */
-template<chipz::concepts::CommunicationInterface CommInterface>
+template<typename CommInterface>
 class HD44780 : public Chip<CommInterface> {
 public:
-    enum class InterfaceMode {
-        Bit4,
-        Bit8
-    };
-
     enum class DisplaySize {
         Size16x2,
         Size20x2,
@@ -41,32 +45,26 @@ public:
     };
 
     struct Config {
-        InterfaceMode mode;
         DisplaySize size;
-        bool cursorVisible;
-        bool cursorBlink;
+        bool        cursorVisible;
+        bool        cursorBlink;
     };
 
     /**
-     * @brief Construct HD44780 driver with communication interface and configuration
-     * @param comm Reference to communication interface (GPIO)
-     * @param config Display configuration
-     * @param get_tick Function to get current system tick in milliseconds
+     * @brief Construct HD44780 driver
+     *
+     * @param comm   Interface wired per bus bit layout described above
+     * @param config Display geometry and cursor settings
      */
-    HD44780(CommInterface& comm,
-            const Config& config,
-            std::function<uint32_t()> get_tick = nullptr,
-            std::function<void(uint8_t d4_d7, bool rs, bool e)> update_pins = nullptr)
+    HD44780(CommInterface& comm, const Config& config)
         : Chip<CommInterface>(comm)
         , config_(config)
         , status_(ChipBase::Status::Uninitialized)
         , state_(State::Uninit)
         , transfer_state_(TransferState::Idle)
-        , tick_timer_(0)
-        , last_tick_(0)
-        , delay_(0)
-        , init_step_(0)
+        , uninit_delay_requested_(false)
         , transfer_complete_(true)
+        , init_step_(0)
         , current_byte_(0)
         , single_nibble_value_(0)
         , current_rs_(false)
@@ -79,62 +77,38 @@ public:
         , buffer_write_length_(0)
         , buffer_write_chars_sent_(0)
         , buffer_write_need_cursor_(false)
-        , get_tick_(get_tick)
-        , update_pins_(update_pins)
     {
         switch (config_.size) {
-            case DisplaySize::Size16x2:
-                rows_ = 2;
-                columns_ = 16;
-                break;
-            case DisplaySize::Size20x2:
-                rows_ = 2;
-                columns_ = 20;
-                break;
-            case DisplaySize::Size20x4:
-                rows_ = 4;
-                columns_ = 20;
-                break;
-            case DisplaySize::Size40x2:
-                rows_ = 2;
-                columns_ = 40;
-                break;
+            case DisplaySize::Size16x2: rows_ = 2; columns_ = 16; break;
+            case DisplaySize::Size20x2: rows_ = 2; columns_ = 20; break;
+            case DisplaySize::Size20x4: rows_ = 4; columns_ = 20; break;
+            case DisplaySize::Size40x2: rows_ = 2; columns_ = 40; break;
         }
-
     }
 
-    // Chip interface implementation
     bool initialize() override {
-        if (!this->comm_.isReady()) {
+        if (!this->get<CommInterface>().isReady()) {
             status_ = ChipBase::Status::Error;
             return false;
         }
-
-        // Reset state machine
-        state_ = State::Uninit;
-        transfer_state_ = TransferState::Idle;
-        tick_timer_ = 0;
-        delay_ = 0;
-        init_step_ = 0;
-        transfer_complete_ = true;
-        current_byte_ = 0;
-        current_rs_ = false;
-        single_nibble_value_ = 0;
+        state_                    = State::Uninit;
+        transfer_state_           = TransferState::Idle;
+        uninit_delay_requested_   = false;
+        transfer_complete_        = true;
+        init_step_                = 0;
+        current_byte_             = 0;
+        current_rs_               = false;
+        single_nibble_value_      = 0;
         buffer_write_in_progress_ = false;
-        buffer_write_index_ = 0;
-        buffer_write_total_ = 0;
-        buffer_ptr_ = nullptr;
-        buffer_write_partial_ = false;
-        buffer_write_start_pos_ = 0;
-        buffer_write_length_ = 0;
-        buffer_write_chars_sent_ = 0;
+        buffer_write_index_       = 0;
+        buffer_write_total_       = 0;
+        buffer_ptr_               = nullptr;
+        buffer_write_partial_     = false;
+        buffer_write_start_pos_   = 0;
+        buffer_write_length_      = 0;
+        buffer_write_chars_sent_  = 0;
         buffer_write_need_cursor_ = false;
-
-        if (get_tick_) {
-            last_tick_ = get_tick_();
-        }
-
-        status_ = ChipBase::Status::Ready;
+        status_                   = ChipBase::Status::Ready;
         return true;
     }
 
@@ -144,480 +118,358 @@ public:
     }
 
     bool isReady() const override {
-        return status_ == ChipBase::Status::Ready && this->comm_.isReady() && state_ == State::Idle;
+        return status_ == ChipBase::Status::Ready
+            && this->get<CommInterface>().isReady()
+            && state_ == State::Idle;
     }
 
-    ChipBase::Status getStatus() const override {
-        return status_;
-    }
+    ChipBase::Status getStatus() const override { return status_; }
 
-    std::string getDeviceId() const override {
-        return "HD44780 LCD";
-    }
+    std::string getDeviceId() const override { return "HD44780 LCD"; }
 
     bool main() override {
-        if (status_ != ChipBase::Status::Ready) {
-            return false;
-        }
+        if (status_ != ChipBase::Status::Ready) return false;
+        if (!transfer_complete_) return true;  // async op in flight
 
-        // Calculate elapsed time since last call
-        if (get_tick_) {
-            uint32_t current_tick = get_tick_();
-            uint32_t elapsed_ms = current_tick - last_tick_;
-            last_tick_ = current_tick;
-
-            // Update tick timer
-            tick_timer_ += elapsed_ms;
-
-            // Decrement delay timer
-            if (delay_ > elapsed_ms) {
-                delay_ -= elapsed_ms;
-            } else {
-                delay_ = 0;
-            }
-        }
-
-        // Wait for transfer to complete
-        if (!transfer_complete_) {
-            return true;
-        }
-
-        // Wait for delay before processing
-        if (delay_ > 0) {
-            return true;
-        }
-
-        // Main state machine
         switch (state_) {
             case State::Uninit:
-                // Wait for power-on delay
-                if (tick_timer_ >= DELAY_INIT) {
-                    state_ = State::Initializing;
-                    init_step_ = 0;
+                if (!uninit_delay_requested_) {
+                    uninit_delay_requested_ = true;
+                    if (this->defer_ms_) this->defer_ms_(DELAY_INIT_MS);
+                } else {
+                    state_          = State::Initializing;
+                    init_step_      = 0;
                     transfer_state_ = TransferState::Idle;
+                    handleInitializingState();
                 }
                 break;
-
             case State::Initializing:
                 handleInitializingState();
                 break;
-
             case State::Transfer:
                 handleTransferState();
                 break;
-
             case State::Idle:
-                // Just waiting, nothing to do
                 break;
         }
-
         return true;
     }
 
-    // HD44780-specific interface
-
     /**
-     * @brief Write full buffer to display
-     * @param buffer Pointer to buffer (rows * columns bytes)
-     * @return true if write started successfully, false if busy
+     * @brief Write the full display buffer (rows × columns characters)
+     *
+     * @param buffer Pointer to character data; caller must keep it alive
+     *               until isReady() returns true.
+     * @return true if write started, false if busy
      */
     bool writeBuffer(const char* buffer) {
-        if (state_ != State::Idle || buffer_write_in_progress_) {
-            return false;
-        }
-
-        buffer_ptr_ = buffer;
-        buffer_write_index_ = 0;
-        buffer_write_total_ = rows_ * (columns_ + 1);
+        if (state_ != State::Idle || buffer_write_in_progress_) return false;
+        buffer_ptr_               = buffer;
+        buffer_write_index_       = 0;
+        buffer_write_total_       = static_cast<uint16_t>(rows_) * (columns_ + 1u);
         buffer_write_in_progress_ = true;
-        buffer_write_partial_ = false;
-
-        state_ = State::Transfer;
-        transfer_state_ = TransferState::Idle;
-        delay_ = 0;
-
+        buffer_write_partial_     = false;
+        state_                    = State::Transfer;
+        transfer_state_           = TransferState::Idle;
         return true;
     }
 
     /**
-     * @brief Write partial buffer at specific position
-     * @param buffer Pointer to buffer
-     * @param position Linear position (0 to rows*columns-1)
-     * @param length Number of characters to write
-     * @return true if write started successfully, false otherwise
+     * @brief Write a partial buffer at a specific screen position
+     *
+     * @param buffer   Data to write; caller must keep it alive until isReady()
+     * @param position Linear position (0 = top-left corner)
+     * @param length   Number of characters to write
+     * @return true if write started, false if busy or parameters out of range
      */
     bool writeBufferAtPosition(const char* buffer, uint16_t position, uint16_t length) {
-        if (state_ != State::Idle || buffer_write_in_progress_) {
-            return false;
-        }
-
-        uint16_t total_screen_size = rows_ * columns_;
-        if (position >= total_screen_size || length == 0) {
-            return false;
-        }
-
-        if (position + length > total_screen_size) {
-            return false;
-        }
-
-        buffer_ptr_ = buffer;
-        buffer_write_start_pos_ = position;
-        buffer_write_length_ = length;
-        buffer_write_chars_sent_ = 0;
+        if (state_ != State::Idle || buffer_write_in_progress_) return false;
+        uint16_t total = static_cast<uint16_t>(rows_) * columns_;
+        if (position >= total || length == 0 || position + length > total) return false;
+        buffer_ptr_               = buffer;
+        buffer_write_start_pos_   = position;
+        buffer_write_length_      = length;
+        buffer_write_chars_sent_  = 0;
         buffer_write_need_cursor_ = true;
         buffer_write_in_progress_ = true;
-        buffer_write_partial_ = true;
-
-        state_ = State::Transfer;
-        transfer_state_ = TransferState::Idle;
-        delay_ = 0;
-
+        buffer_write_partial_     = true;
+        state_                    = State::Transfer;
+        transfer_state_           = TransferState::Idle;
         return true;
     }
 
 private:
-    enum class State {
-        Uninit,       // Uninitialized state
-        Initializing, // Performing initialization sequence
-        Idle,         // Idle, ready for commands
-        Transfer      // Transferring data to display
-    };
+    // -------------------------------------------------------------------------
+    // State machine
+    // -------------------------------------------------------------------------
+
+    enum class State { Uninit, Initializing, Idle, Transfer };
 
     enum class TransferState {
         Idle,
-        HighNibbleEHigh,
-        HighNibbleELow,
-        LowNibbleEHigh,
-        LowNibbleELow,
-        SingleNibbleEHigh,
-        SingleNibbleELow
+        HighNibbleEHigh,   ///< High nibble sent with E=1, awaiting completion
+        HighNibbleELow,    ///< High nibble sent with E=0, awaiting completion
+        LowNibbleEHigh,    ///< Low nibble sent with E=1, awaiting completion
+        LowNibbleELow,     ///< Low nibble sent with E=0, awaiting completion
+        SingleNibbleEHigh, ///< Single nibble sent with E=1 (init only)
+        SingleNibbleELow   ///< Single nibble sent with E=0 (init only)
     };
 
-    Config config_;
-    ChipBase::Status status_;
-    State state_;
-    TransferState transfer_state_;
+    // -------------------------------------------------------------------------
+    // Timing constants
+    // -------------------------------------------------------------------------
 
-    // Display size
-    uint8_t rows_;
-    uint8_t columns_;
+    /// Power-on delay requested through Core's defer_ms (min 15 ms per datasheet)
+    static constexpr uint32_t DELAY_INIT_MS   = 15;
 
-    // Timing
-    uint32_t tick_timer_;
-    uint32_t last_tick_;
-    uint32_t delay_;
-    std::function<uint32_t()> get_tick_;
+    /// E=1 pulse width (min 230 ns; 1 µs is well within spec)
+    static constexpr uint32_t DELAY_E_HIGH_US = 1;
 
-    // Initialization
-    uint8_t init_step_;
-    bool transfer_complete_;
+    /// E=0 hold + normal command execution time (min 37 µs; 50 µs with margin)
+    static constexpr uint32_t DELAY_E_LOW_US  = 50;
 
-    // Current transfer data
-    uint8_t current_byte_;
-    uint8_t single_nibble_value_;
-    bool current_rs_;
+    /// Clear Display / Return Home execution time (min 1.52 ms)
+    static constexpr uint32_t DELAY_CLEAR_US  = 2000;
 
-    // Buffer write state
-    bool buffer_write_in_progress_;
-    uint16_t buffer_write_index_;
-    uint16_t buffer_write_total_;
-    const char* buffer_ptr_;
+    // -------------------------------------------------------------------------
+    // HD44780 command bytes and flags
+    // -------------------------------------------------------------------------
 
-    // Partial buffer write state
-    bool buffer_write_partial_;
-    uint16_t buffer_write_start_pos_;
-    uint16_t buffer_write_length_;
-    uint16_t buffer_write_chars_sent_;
-    bool buffer_write_need_cursor_;
-
-    // Pin update function
-    std::function<void(uint8_t d4_d7, bool rs, bool e)> update_pins_;
-
-    // HD44780 Commands
-    static constexpr uint8_t CMD_CLEAR_DISPLAY = 0x01;
-    static constexpr uint8_t CMD_RETURN_HOME = 0x02;
-    static constexpr uint8_t CMD_ENTRY_MODE_SET = 0x04;
+    static constexpr uint8_t CMD_CLEAR_DISPLAY   = 0x01;
+    static constexpr uint8_t CMD_RETURN_HOME     = 0x02;
+    static constexpr uint8_t CMD_ENTRY_MODE_SET  = 0x04;
     static constexpr uint8_t CMD_DISPLAY_CONTROL = 0x08;
-    static constexpr uint8_t CMD_CURSOR_SHIFT = 0x10;
-    static constexpr uint8_t CMD_FUNCTION_SET = 0x20;
-    static constexpr uint8_t CMD_SET_CGRAM_ADDR = 0x40;
-    static constexpr uint8_t CMD_SET_DDRAM_ADDR = 0x80;
+    static constexpr uint8_t CMD_FUNCTION_SET    = 0x20;
+    static constexpr uint8_t CMD_SET_DDRAM_ADDR  = 0x80;
 
-    // Timing requirements (in milliseconds)
-    static constexpr uint32_t DELAY_INIT = 15;
-    static constexpr uint32_t DELAY_LONG_CMD = 2;
-    static constexpr uint32_t DELAY_SHORT_CMD = 0;
+    static constexpr uint8_t ENTRY_INCREMENT     = 0x02;
+    static constexpr uint8_t ENTRY_SHIFT_OFF     = 0x00;
+    static constexpr uint8_t DISPLAY_ON          = 0x04;
+    static constexpr uint8_t CURSOR_ON           = 0x02;
+    static constexpr uint8_t CURSOR_OFF          = 0x00;
+    static constexpr uint8_t BLINK_ON            = 0x01;
+    static constexpr uint8_t BLINK_OFF           = 0x00;
+    static constexpr uint8_t BIT4_MODE           = 0x00;
+    static constexpr uint8_t LINE2               = 0x08;
+    static constexpr uint8_t DOTS_5x8            = 0x00;
 
-    // Entry Mode flags
-    static constexpr uint8_t ENTRY_INCREMENT = 0x02;
-    static constexpr uint8_t ENTRY_DECREMENT = 0x00;
-    static constexpr uint8_t ENTRY_SHIFT_ON = 0x01;
-    static constexpr uint8_t ENTRY_SHIFT_OFF = 0x00;
+    static constexpr uint8_t ROW1_ADDR           = 0x00;
+    static constexpr uint8_t ROW2_ADDR           = 0x40;
+    static constexpr uint8_t ROW3_ADDR           = 0x14;
+    static constexpr uint8_t ROW4_ADDR           = 0x54;
 
-    // Display Control flags
-    static constexpr uint8_t DISPLAY_ON = 0x04;
-    static constexpr uint8_t DISPLAY_OFF = 0x00;
-    static constexpr uint8_t CURSOR_ON = 0x02;
-    static constexpr uint8_t CURSOR_OFF = 0x00;
-    static constexpr uint8_t BLINK_ON = 0x01;
-    static constexpr uint8_t BLINK_OFF = 0x00;
+    // -------------------------------------------------------------------------
+    // Members
+    // -------------------------------------------------------------------------
 
-    // Function Set flags
-    static constexpr uint8_t BIT8_MODE = 0x10;
-    static constexpr uint8_t BIT4_MODE = 0x00;
-    static constexpr uint8_t LINE2 = 0x08;
-    static constexpr uint8_t LINE1 = 0x00;
-    static constexpr uint8_t DOTS_5x10 = 0x04;
-    static constexpr uint8_t DOTS_5x8 = 0x00;
+    Config           config_;
+    ChipBase::Status status_;
+    State            state_;
+    TransferState    transfer_state_;
+    uint8_t          rows_{};
+    uint8_t          columns_{};
 
-    // DDRAM addresses for rows
-    static constexpr uint8_t ROW1_ADDR = 0x00;
-    static constexpr uint8_t ROW2_ADDR = 0x40;
-    static constexpr uint8_t ROW3_ADDR = 0x14;
-    static constexpr uint8_t ROW4_ADDR = 0x54;
+    bool             uninit_delay_requested_;
+    bool             transfer_complete_;
 
-    /**
-     * @brief Called by Core when a transfer-complete interrupt is routed here
-     * @param success True if transfer succeeded, false on error
-     */
-    void onTransferComplete(bool success) override {
+    uint8_t          init_step_;
+    uint8_t          current_byte_;
+    uint8_t          single_nibble_value_;
+    bool             current_rs_;
+
+    bool             buffer_write_in_progress_;
+    uint16_t         buffer_write_index_;
+    uint16_t         buffer_write_total_;
+    const char*      buffer_ptr_;
+    bool             buffer_write_partial_;
+    uint16_t         buffer_write_start_pos_;
+    uint16_t         buffer_write_length_;
+    uint16_t         buffer_write_chars_sent_;
+    bool             buffer_write_need_cursor_;
+
+    // -------------------------------------------------------------------------
+    // Transfer complete callback
+    // -------------------------------------------------------------------------
+
+    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
         if (!success) {
             status_ = ChipBase::Status::Error;
-            state_ = State::Idle;
+            state_  = State::Idle;
             return;
         }
-
         transfer_complete_ = true;
     }
 
+    // -------------------------------------------------------------------------
+    // Bus helpers
+    // -------------------------------------------------------------------------
+
     /**
-     * @brief Handle initialization state
+     * @brief Pack nibble, RS, and E flag into the 6-bit bus value
+     *
+     *   bits [3:0] = nibble (D4–D7)
+     *   bit  4     = RS
+     *   bit  5     = E
      */
-    void handleInitializingState() {
+    static constexpr uint8_t busVal(uint8_t nibble, bool rs, bool e) noexcept {
+        return (nibble & 0x0Fu) | (rs ? 0x10u : 0u) | (e ? 0x20u : 0u);
+    }
+
+    /// Transmit one bus byte asynchronously; sets transfer_complete_ = false
+    void sendBusValue(uint8_t val, uint32_t duration_us) {
+        transfer_complete_ = false;
+        this->template transmit<CommInterface>(&val, 1u, duration_us);
+    }
+
+    /// Start a full byte transfer (high nibble first, 4-bit mode)
+    void startByte(uint8_t byte, bool rs) {
+        current_byte_ = byte;
+        current_rs_   = rs;
+        sendBusValue(busVal(static_cast<uint8_t>((byte >> 4u) & 0x0Fu), rs, true),
+                     DELAY_E_HIGH_US);
+        transfer_state_ = TransferState::HighNibbleEHigh;
+    }
+
+    /// Start a single-nibble transfer (used during init to switch bus width)
+    void startSingleNibble(uint8_t nibble) {
+        single_nibble_value_ = nibble;
+        sendBusValue(busVal(nibble, false, true), DELAY_E_HIGH_US);
+        transfer_state_ = TransferState::SingleNibbleEHigh;
+    }
+
+    // -------------------------------------------------------------------------
+    // Nibble-phase state machine
+    //
+    // Advances one phase per call — always exactly one bus write.
+    // Returns true  → wrote something, caller should return and wait.
+    // Returns false → this byte/nibble is complete, caller should advance.
+    //
+    // post_byte_delay_us is the duration applied to the final E=0 write of a
+    // full byte; it encodes the command execution time for that byte.
+    // -------------------------------------------------------------------------
+
+    bool advanceNibblePhase(uint32_t post_byte_delay_us) {
         switch (transfer_state_) {
-            case TransferState::Idle:
-                handleInitStep();
-                break;
+            case TransferState::HighNibbleEHigh:
+                sendBusValue(busVal(static_cast<uint8_t>((current_byte_ >> 4u) & 0x0Fu),
+                                    current_rs_, false),
+                             DELAY_E_HIGH_US);
+                transfer_state_ = TransferState::HighNibbleELow;
+                return true;
 
             case TransferState::HighNibbleELow:
-                {
-                    uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, current_rs_, false);
-                    }
-                    transfer_state_ = TransferState::LowNibbleEHigh;
-                }
-                break;
+                sendBusValue(busVal(static_cast<uint8_t>(current_byte_ & 0x0Fu),
+                                    current_rs_, true),
+                             DELAY_E_HIGH_US);
+                transfer_state_ = TransferState::LowNibbleEHigh;
+                return true;
 
             case TransferState::LowNibbleEHigh:
-                {
-                    uint8_t nibble = current_byte_ & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, current_rs_, true);
-                    }
-                    transfer_state_ = TransferState::LowNibbleELow;
-                }
-                break;
+                sendBusValue(busVal(static_cast<uint8_t>(current_byte_ & 0x0Fu),
+                                    current_rs_, false),
+                             post_byte_delay_us);
+                transfer_state_ = TransferState::LowNibbleELow;
+                return true;
 
             case TransferState::LowNibbleELow:
-                {
-                    uint8_t nibble = current_byte_ & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, current_rs_, false);
-                    }
-                    transfer_state_ = TransferState::Idle;
+                transfer_state_ = TransferState::Idle;
+                return false;  // byte complete
 
-                    // Set delay based on command
-                    if (current_byte_ == CMD_CLEAR_DISPLAY || current_byte_ == CMD_RETURN_HOME) {
-                        delay_ = DELAY_LONG_CMD;
-                    } else {
-                        delay_ = DELAY_SHORT_CMD;
-                    }
-                    init_step_++;
-                }
-                break;
+            case TransferState::SingleNibbleEHigh:
+                sendBusValue(busVal(single_nibble_value_, false, false),
+                             DELAY_E_LOW_US);
+                transfer_state_ = TransferState::SingleNibbleELow;
+                return true;
 
             case TransferState::SingleNibbleELow:
-                transfer_complete_ = false;
-                if (update_pins_) {
-                    update_pins_(single_nibble_value_, false, false);
-                }
                 transfer_state_ = TransferState::Idle;
-                delay_ = DELAY_SHORT_CMD;
-                init_step_++;
-                break;
+                return false;  // nibble complete
 
             default:
-                transfer_state_ = TransferState::Idle;
-                break;
+                return false;
         }
     }
 
-    /**
-     * @brief Handle individual initialization steps
-     */
+    // -------------------------------------------------------------------------
+    // Initialization state handler
+    // -------------------------------------------------------------------------
+
+    void handleInitializingState() {
+        if (transfer_state_ != TransferState::Idle) {
+            // Clear Display and Return Home need the longer execution delay.
+            uint32_t post_delay = (current_byte_ == CMD_CLEAR_DISPLAY ||
+                                   current_byte_ == CMD_RETURN_HOME)
+                                  ? DELAY_CLEAR_US : DELAY_E_LOW_US;
+            if (advanceNibblePhase(post_delay)) return;
+            init_step_++;
+        }
+        handleInitStep();
+    }
+
     void handleInitStep() {
         switch (init_step_) {
-            case 0:
-            case 1:
-            case 2:
-                // First three: Function set (8-bit mode) - single nibble 0x03
-                single_nibble_value_ = 0x03;
-                transfer_complete_ = false;
-                if (update_pins_) {
-                    update_pins_(single_nibble_value_, false, true);
-                }
-                transfer_state_ = TransferState::SingleNibbleELow;
+            // Steps 0–2: send nibble 0x03 (function-set in 8-bit mode) × 3
+            case 0: case 1: case 2:
+                startSingleNibble(0x03u);
                 break;
 
+            // Step 3: send nibble 0x02 (switch to 4-bit mode)
             case 3:
-                // Fourth: Function set (4-bit mode) - single nibble 0x02
-                single_nibble_value_ = 0x02;
-                transfer_complete_ = false;
-                if (update_pins_) {
-                    update_pins_(single_nibble_value_, false, true);
-                }
-                transfer_state_ = TransferState::SingleNibbleELow;
+                startSingleNibble(0x02u);
                 break;
 
+            // Step 4: function set — 4-bit, 2+ lines, 5×8 dots
             case 4:
-                // Function set: 4-bit mode, 2 lines, 5x8 dots
-                current_byte_ = CMD_FUNCTION_SET | BIT4_MODE | LINE2 | DOTS_5x8;
-                current_rs_ = false;
-                {
-                    uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, false, true);
-                    }
-                    transfer_state_ = TransferState::HighNibbleELow;
-                }
+                startByte(CMD_FUNCTION_SET | BIT4_MODE | LINE2 | DOTS_5x8, false);
                 break;
 
-            case 5:
-                // Display control: Display on, cursor off, blink off
-                current_byte_ = CMD_DISPLAY_CONTROL | DISPLAY_ON | CURSOR_OFF | BLINK_OFF;
-                current_rs_ = false;
-                {
-                    uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, false, true);
-                    }
-                    transfer_state_ = TransferState::HighNibbleELow;
-                }
+            // Step 5: display control — apply cursor/blink from config
+            case 5: {
+                uint8_t ctrl = CMD_DISPLAY_CONTROL | DISPLAY_ON
+                             | (config_.cursorVisible ? CURSOR_ON  : CURSOR_OFF)
+                             | (config_.cursorBlink   ? BLINK_ON   : BLINK_OFF );
+                startByte(ctrl, false);
                 break;
+            }
 
+            // Step 6: clear display (uses DELAY_CLEAR_US via advanceNibblePhase)
             case 6:
-                // Clear display
-                current_byte_ = CMD_CLEAR_DISPLAY;
-                current_rs_ = false;
-                {
-                    uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, false, true);
-                    }
-                    transfer_state_ = TransferState::HighNibbleELow;
-                }
+                startByte(CMD_CLEAR_DISPLAY, false);
                 break;
 
+            // Step 7: entry mode — increment cursor, no display shift
             case 7:
-                // Entry mode set: Increment cursor, no display shift
-                current_byte_ = CMD_ENTRY_MODE_SET | ENTRY_INCREMENT | ENTRY_SHIFT_OFF;
-                current_rs_ = false;
-                {
-                    uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, false, true);
-                    }
-                    transfer_state_ = TransferState::HighNibbleELow;
-                }
+                startByte(CMD_ENTRY_MODE_SET | ENTRY_INCREMENT | ENTRY_SHIFT_OFF, false);
                 break;
 
-            case 8:
-                // Initialization complete!
-                state_ = State::Idle;
-                break;
-
+            // Initialization complete
             default:
                 state_ = State::Idle;
                 break;
         }
     }
 
-    /**
-     * @brief Handle transfer state
-     */
+    // -------------------------------------------------------------------------
+    // Transfer (display write) state handler
+    // -------------------------------------------------------------------------
+
     void handleTransferState() {
-        switch (transfer_state_) {
-            case TransferState::Idle:
-                handleTransferIdle();
-                break;
-
-            case TransferState::HighNibbleELow:
-                {
-                    uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, current_rs_, false);
-                    }
-                    transfer_state_ = TransferState::LowNibbleEHigh;
-                }
-                break;
-
-            case TransferState::LowNibbleEHigh:
-                {
-                    uint8_t nibble = current_byte_ & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, current_rs_, true);
-                    }
-                    transfer_state_ = TransferState::LowNibbleELow;
-                }
-                break;
-
-            case TransferState::LowNibbleELow:
-                {
-                    uint8_t nibble = current_byte_ & 0x0F;
-                    transfer_complete_ = false;
-                    if (update_pins_) {
-                        update_pins_(nibble, current_rs_, false);
-                    }
-                    transfer_state_ = TransferState::Idle;
-                    delay_ = DELAY_SHORT_CMD;
-                }
-                break;
-
-            default:
-                transfer_state_ = TransferState::Idle;
-                break;
+        if (transfer_state_ != TransferState::Idle) {
+            if (advanceNibblePhase(DELAY_E_LOW_US)) return;
+            // byte complete — fall through to load next
         }
+        handleTransferIdle();
     }
 
-    /**
-     * @brief Handle transfer idle state (send next byte from buffer)
-     */
     void handleTransferIdle() {
         if (!buffer_write_in_progress_) {
             state_ = State::Idle;
             return;
         }
-
-        if (buffer_write_partial_) {
-            handlePartialBufferWrite();
-        } else {
-            handleFullBufferWrite();
-        }
+        if (buffer_write_partial_) handlePartialBufferWrite();
+        else                       handleFullBufferWrite();
     }
 
-    /**
-     * @brief Handle partial buffer write
-     */
     void handlePartialBufferWrite() {
         if (buffer_write_chars_sent_ >= buffer_write_length_) {
             buffer_write_in_progress_ = false;
@@ -626,56 +478,29 @@ private:
         }
 
         if (buffer_write_need_cursor_) {
-            // Send cursor positioning command
-            uint16_t current_pos = buffer_write_start_pos_ + buffer_write_chars_sent_;
-            uint8_t current_row = current_pos / columns_;
-            uint8_t current_col = current_pos % columns_;
-
-            uint8_t row_offsets[] = {ROW1_ADDR, ROW2_ADDR, ROW3_ADDR, ROW4_ADDR};
-            current_byte_ = CMD_SET_DDRAM_ADDR | (row_offsets[current_row] + current_col);
-            current_rs_ = false;
-            uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-            transfer_complete_ = false;
-            if (update_pins_) {
-                update_pins_(nibble, false, true);
-            }
-            transfer_state_ = TransferState::HighNibbleELow;
+            uint16_t pos  = buffer_write_start_pos_ + buffer_write_chars_sent_;
+            uint8_t  row  = static_cast<uint8_t>(pos / columns_);
+            uint8_t  col  = static_cast<uint8_t>(pos % columns_);
+            const uint8_t offsets[] = {ROW1_ADDR, ROW2_ADDR, ROW3_ADDR, ROW4_ADDR};
+            startByte(CMD_SET_DDRAM_ADDR | static_cast<uint8_t>(offsets[row] + col), false);
             buffer_write_need_cursor_ = false;
         } else {
-            // Send character data
-            current_byte_ = static_cast<uint8_t>(buffer_ptr_[buffer_write_chars_sent_]);
-            current_rs_ = true;
-            uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-            transfer_complete_ = false;
-            if (update_pins_) {
-                update_pins_(nibble, true, true);
-            }
-            transfer_state_ = TransferState::HighNibbleELow;
-
+            startByte(static_cast<uint8_t>(buffer_ptr_[buffer_write_chars_sent_]), true);
             buffer_write_chars_sent_++;
 
-            // Check if next character is on a different row
             if (buffer_write_chars_sent_ < buffer_write_length_) {
-                uint16_t prev_pos = buffer_write_start_pos_ + buffer_write_chars_sent_ - 1;
-                uint16_t next_pos = buffer_write_start_pos_ + buffer_write_chars_sent_;
-                uint8_t prev_row = prev_pos / columns_;
-                uint8_t next_row = next_pos / columns_;
-
-                if (next_row != prev_row) {
-                    buffer_write_need_cursor_ = true;
-                }
+                uint16_t prev_row = (buffer_write_start_pos_ + buffer_write_chars_sent_ - 1u)
+                                    / columns_;
+                uint16_t next_row = (buffer_write_start_pos_ + buffer_write_chars_sent_)
+                                    / columns_;
+                if (next_row != prev_row) buffer_write_need_cursor_ = true;
             }
 
-            // Check if done
-            if (buffer_write_chars_sent_ >= buffer_write_length_) {
+            if (buffer_write_chars_sent_ >= buffer_write_length_)
                 buffer_write_in_progress_ = false;
-            }
         }
     }
 
-    /**
-     * @brief Handle full buffer write
-     */
     void handleFullBufferWrite() {
         if (buffer_write_index_ >= buffer_write_total_) {
             buffer_write_in_progress_ = false;
@@ -683,40 +508,21 @@ private:
             return;
         }
 
-        uint16_t chars_written = buffer_write_index_ % (columns_ + 1);
+        uint16_t chars_written = buffer_write_index_ % (columns_ + 1u);
 
-        if (chars_written == 0) {
-            // Send cursor position command for new row
-            uint8_t row_offsets[] = {ROW1_ADDR, ROW2_ADDR, ROW3_ADDR, ROW4_ADDR};
-            uint8_t current_row = buffer_write_index_ / (columns_ + 1);
-            current_byte_ = CMD_SET_DDRAM_ADDR | row_offsets[current_row];
-            current_rs_ = false;
-            uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-            transfer_complete_ = false;
-            if (update_pins_) {
-                update_pins_(nibble, false, true);
-            }
-            transfer_state_ = TransferState::HighNibbleELow;
+        if (chars_written == 0u) {
+            const uint8_t offsets[] = {ROW1_ADDR, ROW2_ADDR, ROW3_ADDR, ROW4_ADDR};
+            uint8_t row = static_cast<uint8_t>(buffer_write_index_ / (columns_ + 1u));
+            startByte(CMD_SET_DDRAM_ADDR | offsets[row], false);
         } else {
-            // Send character data
-            uint16_t buffer_char_index = (buffer_write_index_ / (columns_ + 1)) * columns_ +
-                                         (chars_written - 1);
-            current_byte_ = static_cast<uint8_t>(buffer_ptr_[buffer_char_index]);
-            current_rs_ = true;
-            uint8_t nibble = (current_byte_ >> 4) & 0x0F;
-            transfer_complete_ = false;
-            if (update_pins_) {
-                update_pins_(nibble, true, true);
-            }
-            transfer_state_ = TransferState::HighNibbleELow;
+            uint16_t char_idx = static_cast<uint16_t>(
+                (buffer_write_index_ / (columns_ + 1u)) * columns_ + (chars_written - 1u));
+            startByte(static_cast<uint8_t>(buffer_ptr_[char_idx]), true);
         }
 
         buffer_write_index_++;
-
-        // Check if done
-        if (buffer_write_index_ >= buffer_write_total_) {
+        if (buffer_write_index_ >= buffer_write_total_)
             buffer_write_in_progress_ = false;
-        }
     }
 };
 
