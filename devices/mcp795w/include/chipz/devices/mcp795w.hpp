@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_MCP795W_HPP
 #define CHIPZ_DEVICES_MCP795W_HPP
 
-#include <chipz/peripheral.hpp>
+#include <chipz/chip.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <ctime>
@@ -27,7 +27,7 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically SPI)
  */
-class MCP795W : public Peripheral<interfaces::SPIInterface> {
+class MCP795W : public Chip<interfaces::SPIInterface> {
 public:
     /**
      * @brief Construct MCP795W driver with communication interface
@@ -36,7 +36,7 @@ public:
      */
     MCP795W(interfaces::SPIInterface& comm,
             std::function<uint8_t()> get_spi_transmission_disabled = nullptr)
-        : Peripheral<interfaces::SPIInterface>(comm)
+        : Chip<interfaces::SPIInterface>(comm)
         , status_(Status::Uninitialized)
         , current_time_{}
         , alarm_time_{}
@@ -53,7 +53,7 @@ public:
     {
     }
 
-    // Peripheral interface implementation
+    // Chip interface implementation
     bool initialize() override {
         if (!comm_.isReady()) {
             status_ = Status::Error;

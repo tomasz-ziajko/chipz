@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Commercial license available — see README
 
-#ifndef CHIPZ_PERIPHERAL_HPP
-#define CHIPZ_PERIPHERAL_HPP
+#ifndef CHIPZ_CHIP_HPP
+#define CHIPZ_CHIP_HPP
 
 #include "communication_interface.hpp"
 #include "concepts.hpp"
@@ -17,28 +17,28 @@
 namespace chipz {
 
 /**
- * @brief Non-template base class for all peripheral devices
+ * @brief Non-template base class for all externally-connected chips
  *
  * Defines the common virtual interface and owns the static registry.
- * Being non-template allows heterogeneous collections of peripherals
+ * Being non-template allows heterogeneous collections of chips
  * and enables the static management methods (initializeAll, runAllMain, etc.).
  *
  * AUTOMATIC REGISTRATION:
- * Each PeripheralBase instance automatically registers itself upon construction
+ * Each ChipBase instance automatically registers itself upon construction
  * and unregisters upon destruction.
  *
  * COMM INTERRUPT ROUTING:
- * Core calls getCommInterface() at add() time to register the peripheral's
+ * Core calls getCommInterface() at add() time to register the chip's
  * communication interface. When an interrupt fires, Core looks up which
- * peripheral is active on that bus and calls onInterrupt() on it.
+ * chip is active on that bus and calls onInterrupt() on it.
  *
  * SCHEDULING:
  * Core injects defer and claim-bus callbacks at add() time. Drivers call
  * defer_ms_ / defer_us_ from main() to skip the next N ms/µs. The
- * claim_bus_fn_ is invoked by Peripheral<CommInterface>::transmit() /
+ * claim_bus_fn_ is invoked by Chip<CommInterface>::transmit() /
  * receive() wrappers before each transfer.
  */
-class PeripheralBase {
+class ChipBase {
 public:
     enum class Status {
         Uninitialized,
@@ -48,7 +48,7 @@ public:
         Disconnected
     };
 
-    virtual ~PeripheralBase() {
+    virtual ~ChipBase() {
         unregisterInstance(this);
     }
 
@@ -60,7 +60,7 @@ public:
     virtual bool main() = 0;
 
     /**
-     * @brief Get default scheduling priority for this peripheral
+     * @brief Get default scheduling priority for this chip
      *
      * Lower value = higher priority (0 = highest, 255 = lowest).
      * Can be overridden per driver class or at runtime via Core::setPriority().
@@ -70,10 +70,10 @@ public:
     virtual uint8_t getDefaultPriority() const { return 128; }
 
     /**
-     * @brief Get the communication interface used by this peripheral
+     * @brief Get the communication interface used by this chip
      *
      * Called by Core::add() to register the interface for interrupt routing.
-     * Returns nullptr for peripherals without a communication interface.
+     * Returns nullptr for chips without a communication interface.
      *
      * @return Pointer to communication interface, or nullptr
      */
@@ -82,8 +82,8 @@ public:
     /**
      * @brief Handle a routed communication interrupt
      *
-     * Called by Core when a hardware interrupt fires on this peripheral's
-     * communication interface. Peripheral<CommInterface> overrides this and
+     * Called by Core when a hardware interrupt fires on this chip's
+     * communication interface. Chip<CommInterface> overrides this and
      * dispatches to onTransferComplete / onError / onArbitrationLost.
      *
      * @param type    Type of interrupt that fired
@@ -95,7 +95,7 @@ public:
     }
 
     /**
-     * @brief Declare which non-communication ISR sources this peripheral needs
+     * @brief Declare which non-communication ISR sources this chip needs
      *
      * Called by Core::add() to populate the ISR dispatch table. Return a
      * span over a static constexpr array — no heap allocation.
@@ -108,7 +108,7 @@ public:
      *   }
      * @endcode
      *
-     * @return View over the ISR sources required by this peripheral
+     * @return View over the ISR sources required by this chip
      */
     virtual std::span<const ISRSource> requiredISRs() const noexcept { return {}; }
 
@@ -142,8 +142,8 @@ public:
     /**
      * @brief Inject claim-bus callback from Core
      *
-     * Called by Peripheral<CommInterface>::transmit() / receive() before
-     * each transfer to inform Core which peripheral is active on the bus.
+     * Called by Chip<CommInterface>::transmit() / receive() before
+     * each transfer to inform Core which chip is active on the bus.
      * This lets Core route the next transfer-complete interrupt correctly.
      */
     void setClaimBusCallback(std::function<void()> fn) {
@@ -156,8 +156,8 @@ public:
 
     static bool initializeAll() {
         bool all_success = true;
-        for (auto* peripheral : getRegistry()) {
-            if (!peripheral->initialize()) {
+        for (auto* chip : getRegistry()) {
+            if (!chip->initialize()) {
                 all_success = false;
             }
         }
@@ -166,8 +166,8 @@ public:
 
     static bool resetAll() {
         bool all_success = true;
-        for (auto* peripheral : getRegistry()) {
-            if (!peripheral->reset()) {
+        for (auto* chip : getRegistry()) {
+            if (!chip->reset()) {
                 all_success = false;
             }
         }
@@ -176,8 +176,8 @@ public:
 
     static bool runAllMain() {
         bool all_success = true;
-        for (auto* peripheral : getRegistry()) {
-            if (!peripheral->main()) {
+        for (auto* chip : getRegistry()) {
+            if (!chip->main()) {
                 all_success = false;
             }
         }
@@ -185,8 +185,8 @@ public:
     }
 
     static bool allReady() {
-        for (const auto* peripheral : getRegistry()) {
-            if (!peripheral->isReady()) {
+        for (const auto* chip : getRegistry()) {
+            if (!chip->isReady()) {
                 return false;
             }
         }
@@ -199,8 +199,8 @@ public:
 
     static size_t getStatusCount(Status status) {
         size_t count = 0;
-        for (const auto* peripheral : getRegistry()) {
-            if (peripheral->getStatus() == status) {
+        for (const auto* chip : getRegistry()) {
+            if (chip->getStatus() == status) {
                 ++count;
             }
         }
@@ -208,31 +208,31 @@ public:
     }
 
 protected:
-    PeripheralBase() {
+    ChipBase() {
         registerInstance(this);
     }
 
-    PeripheralBase(const PeripheralBase&) = delete;
-    PeripheralBase& operator=(const PeripheralBase&) = delete;
+    ChipBase(const ChipBase&) = delete;
+    ChipBase& operator=(const ChipBase&) = delete;
 
-    PeripheralBase(PeripheralBase&&) = default;
-    PeripheralBase& operator=(PeripheralBase&&) = default;
+    ChipBase(ChipBase&&) = default;
+    ChipBase& operator=(ChipBase&&) = default;
 
     std::function<void(uint32_t)> defer_ms_;
     std::function<void(uint32_t)> defer_us_;
     std::function<void()>         claim_bus_fn_;
 
 private:
-    static std::vector<PeripheralBase*>& getRegistry() {
-        static std::vector<PeripheralBase*> registry;
+    static std::vector<ChipBase*>& getRegistry() {
+        static std::vector<ChipBase*> registry;
         return registry;
     }
 
-    static void registerInstance(PeripheralBase* instance) {
+    static void registerInstance(ChipBase* instance) {
         getRegistry().push_back(instance);
     }
 
-    static void unregisterInstance(PeripheralBase* instance) {
+    static void unregisterInstance(ChipBase* instance) {
         auto& registry = getRegistry();
         for (auto it = registry.begin(); it != registry.end(); ++it) {
             if (*it == instance) {
@@ -244,9 +244,9 @@ private:
 };
 
 /**
- * @brief Template middle layer binding a peripheral to its communication interface
+ * @brief Template middle layer binding a chip to its communication interface
  *
- * Inherits PeripheralBase and owns a reference to the communication interface.
+ * Inherits ChipBase and owns a reference to the communication interface.
  * Device drivers inherit from this class with their specific interface type.
  *
  * Provides:
@@ -259,7 +259,7 @@ private:
  * @tparam CommInterface Communication interface type (must satisfy chipz::concepts::CommunicationInterface)
  */
 template<chipz::concepts::CommunicationInterface CommInterface>
-class Peripheral : public PeripheralBase {
+class Chip : public ChipBase {
 public:
     CommunicationInterface* getCommInterface() override {
         return &comm_;
@@ -278,21 +278,10 @@ protected:
     CommInterface& comm_;
     CommunicationInterface::ConnectionId conn_id_{CommunicationInterface::kInvalidConnection};
 
-    explicit Peripheral(CommInterface& comm) : comm_(comm) {}
+    explicit Chip(CommInterface& comm) : comm_(comm) {}
 
     /**
-     * @brief Transmit data — claims the bus with Core before forwarding
-     *
-     * Returns false immediately if the bus is busy (another peripheral's
-     * transfer is in flight). In that case the driver should return from
-     * main() and retry next cycle.
-     *
-     * @param data   Data to transmit
-     * @param length Number of bytes
-     * @return true if transmission started, false if bus busy or error
-     */
-    /**
-     * @brief Register this peripheral's connection with its communication interface
+     * @brief Register this chip's connection with its communication interface
      *
      * Call from initialize() with the ConnectionId returned by the interface's
      * registerConnection() method. From that point, selectConnection() is
@@ -302,6 +291,17 @@ protected:
         conn_id_ = id;
     }
 
+    /**
+     * @brief Transmit data — claims the bus with Core before forwarding
+     *
+     * Returns false immediately if the bus is busy (another chip's
+     * transfer is in flight). In that case the driver should return from
+     * main() and retry next cycle.
+     *
+     * @param data   Data to transmit
+     * @param length Number of bytes
+     * @return true if transmission started, false if bus busy or error
+     */
     bool transmit(const uint8_t* data, size_t length) {
         if (!comm_.isReady()) {
             return false;
@@ -360,4 +360,4 @@ protected:
 
 } // namespace chipz
 
-#endif // CHIPZ_PERIPHERAL_HPP
+#endif // CHIPZ_CHIP_HPP

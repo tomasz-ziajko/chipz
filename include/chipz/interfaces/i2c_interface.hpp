@@ -84,7 +84,7 @@ public:
      * selectConnection() is called automatically before every transfer.
      *
      * @param device_address 7-bit I2C device address
-     * @return ConnectionId to pass to Peripheral::setConnection()
+     * @return ConnectionId to pass to Chip::setConnection()
      */
     ConnectionId registerConnection(uint8_t device_address) {
         ConnectionId id = nextId();

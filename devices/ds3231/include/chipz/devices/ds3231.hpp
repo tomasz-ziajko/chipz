@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_DS3231_HPP
 #define CHIPZ_DEVICES_DS3231_HPP
 
-#include <chipz/peripheral.hpp>
+#include <chipz/chip.hpp>
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <cstdint>
 #include <ctime>
@@ -27,7 +27,7 @@ namespace devices {
  *
  * @tparam CommInterface Communication interface type (typically I2C)
  */
-class DS3231 : public Peripheral<interfaces::I2CInterface> {
+class DS3231 : public Chip<interfaces::I2CInterface> {
 public:
     struct Temperature {
         int8_t integer;
@@ -54,7 +54,7 @@ public:
      * @param get_tick Function to get current system tick in milliseconds
      */
     DS3231(interfaces::I2CInterface& comm, std::function<uint32_t()> get_tick = nullptr)
-        : Peripheral<interfaces::I2CInterface>(comm)
+        : Chip<interfaces::I2CInterface>(comm)
         , status_(Status::Uninitialized)
         , state_(State::PreInit)
         , current_time_{}
@@ -89,7 +89,7 @@ public:
     {
     }
 
-    // Peripheral interface implementation
+    // Chip interface implementation
     bool initialize() override {
         if (!comm_.isReady()) {
             status_ = Status::Error;
