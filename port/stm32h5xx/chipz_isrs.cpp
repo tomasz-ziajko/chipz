@@ -45,6 +45,7 @@
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <chipz/interfaces/uart_interface.hpp>
+#include <chipz/interfaces/can_interface.hpp>
 #include "irq.hpp"
 #include "stm32h5xx_hal.h"
 
@@ -74,6 +75,9 @@ __attribute__((weak)) extern UART_HandleTypeDef huart1;
 __attribute__((weak)) extern UART_HandleTypeDef huart2;
 __attribute__((weak)) extern UART_HandleTypeDef huart3;
 __attribute__((weak)) extern UART_HandleTypeDef huart4;
+
+__attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan1;
+__attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
 }
 
 // chipz interface objects — always defined in config.cpp
@@ -90,6 +94,9 @@ extern chipz::interfaces::UARTInterface g_uart1;
 extern chipz::interfaces::UARTInterface g_uart2;
 extern chipz::interfaces::UARTInterface g_uart3;
 extern chipz::interfaces::UARTInterface g_uart4;
+
+extern chipz::interfaces::CANInterface<> g_can1;
+extern chipz::interfaces::CANInterface<> g_can2;
 
 extern "C" {
 
@@ -160,6 +167,15 @@ void USART1_IRQHandler() { HAL_UART_IRQHandler(&huart1); }
 void USART2_IRQHandler() { HAL_UART_IRQHandler(&huart2); }
 void USART3_IRQHandler() { HAL_UART_IRQHandler(&huart3); }
 void UART4_IRQHandler()  { HAL_UART_IRQHandler(&huart4); }
+
+// ---------------------------------------------------------------------------
+// FDCAN IRQ handlers — each instance has two interrupt lines (IT0, IT1)
+// ---------------------------------------------------------------------------
+
+void FDCAN1_IT0_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan1); }
+void FDCAN1_IT1_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan1); }
+void FDCAN2_IT0_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan2); }
+void FDCAN2_IT1_IRQHandler() { HAL_FDCAN_IRQHandler(&hfdcan2); }
 
 } // extern "C"
 
@@ -270,4 +286,38 @@ extern "C" void HAL_UART_AbortCpltCallback(UART_HandleTypeDef* h) {
     if (&huart2 && h == &huart2) { g_uart2.notifyError(); return; }
     if (&huart3 && h == &huart3) { g_uart3.notifyError(); return; }
     if (&huart4 && h == &huart4) { g_uart4.notifyError(); return; }
+}
+
+// ---------------------------------------------------------------------------
+// HAL FDCAN weak callback overrides
+//
+// RxFifo0 is used by default; RxFifo1 forwards to the same handler so that
+// drivers using either FIFO work without changes to the ISR file. The FIFO
+// location the RxFunction actually reads from is determined by the lambda in
+// config.cpp (e.g. FDCAN_RX_FIFO0 or FDCAN_RX_FIFO1).
+// ---------------------------------------------------------------------------
+
+extern "C" void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef* h, uint32_t) {
+    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyTxComplete(); return; }
+    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyTxComplete(); return; }
+}
+
+extern "C" void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef* h, uint32_t) {
+    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyRxComplete(); return; }
+    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyRxComplete(); return; }
+}
+
+extern "C" void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef* h, uint32_t) {
+    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyRxComplete(); return; }
+    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyRxComplete(); return; }
+}
+
+extern "C" void HAL_FDCAN_ErrorCallback(FDCAN_HandleTypeDef* h) {
+    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyError(); return; }
+    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyError(); return; }
+}
+
+extern "C" void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef* h, uint32_t) {
+    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyError(); return; }
+    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyError(); return; }
 }

@@ -51,6 +51,7 @@
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <chipz/interfaces/uart_interface.hpp>
+#include <chipz/interfaces/can_interface.hpp>
 
 #include "stm32h5xx_hal.h"
 
@@ -73,6 +74,9 @@ __attribute__((weak)) extern UART_HandleTypeDef huart1;
 __attribute__((weak)) extern UART_HandleTypeDef huart2;
 __attribute__((weak)) extern UART_HandleTypeDef huart3;
 __attribute__((weak)) extern UART_HandleTypeDef huart4;
+
+__attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan1;
+__attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,4 +205,57 @@ chipz::interfaces::UARTInterface g_uart4{
     [](uint8_t* buf, uint16_t len) -> int {
         return HAL_UART_Receive_IT(&huart4, buf, len);
     }
+};
+
+// ---------------------------------------------------------------------------
+// FDCAN interfaces
+//
+// Both classic CAN (fd_format=false, dlc 0–8) and CAN-FD (fd_format=true,
+// dlc 0–15) frames are supported from the same interface instance — the Frame
+// struct fields drive the HAL header at transmit time. MaxPayload=64 covers
+// the largest CAN-FD payload; classic frames simply use fewer bytes.
+//
+// The helpers below are defined once and shared by all instances to keep each
+// instantiation as concise as the UART / SPI / I2C entries above.
+// ---------------------------------------------------------------------------
+
+using CANFrame    = chipz::interfaces::CANFrame<64>;
+using CANInterface = chipz::interfaces::CANInterface<>;
+
+static int fdcan_tx(FDCAN_HandleTypeDef* h, const CANFrame& frame) {
+    FDCAN_TxHeaderTypeDef hdr{};
+    hdr.Identifier          = frame.id();
+    hdr.IdType              = frame.isExtendedId() ? FDCAN_EXTENDED_ID   : FDCAN_STANDARD_ID;
+    hdr.TxFrameType         = FDCAN_DATA_FRAME;
+    hdr.DataLength          = static_cast<uint32_t>(frame.dlc()) << 16U;
+    hdr.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    hdr.BitRateSwitch       = frame.isBrs()      ? FDCAN_BRS_ON        : FDCAN_BRS_OFF;
+    hdr.FDFormat            = frame.isFdFormat() ? FDCAN_FD_CAN        : FDCAN_CLASSIC_CAN;
+    hdr.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+    hdr.MessageMarker       = 0;
+    return HAL_FDCAN_AddMessageToTxFifoQ(h, &hdr, frame.data());
+}
+
+static int fdcan_rx(FDCAN_HandleTypeDef* h, uint32_t fifo, CANFrame& frame) {
+    FDCAN_RxHeaderTypeDef hdr{};
+    uint8_t buf[64]{};
+    int result = HAL_FDCAN_GetRxMessage(h, fifo, &hdr, buf);
+    if (result == HAL_OK) {
+        uint8_t dlc    = static_cast<uint8_t>((hdr.DataLength >> 16U) & 0x0FU);
+        uint8_t length = CANFrame::dlcToLength(dlc);
+        frame.setId(hdr.Identifier, hdr.IdType == FDCAN_EXTENDED_ID);
+        frame.setFdMode(hdr.FDFormat == FDCAN_FD_CAN, hdr.BitRateSwitch == FDCAN_BRS_ON);
+        frame.setData(buf, length);
+    }
+    return result;
+}
+
+CANInterface g_can1{
+    [](const CANFrame& f) -> int { return fdcan_tx(&hfdcan1, f); },
+    [](CANFrame& f)       -> int { return fdcan_rx(&hfdcan1, FDCAN_RX_FIFO0, f); }
+};
+
+CANInterface g_can2{
+    [](const CANFrame& f) -> int { return fdcan_tx(&hfdcan2, f); },
+    [](CANFrame& f)       -> int { return fdcan_rx(&hfdcan2, FDCAN_RX_FIFO0, f); }
 };
