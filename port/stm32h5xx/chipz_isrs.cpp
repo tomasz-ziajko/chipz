@@ -16,7 +16,7 @@
  * causes the linker to prefer these definitions over the __weak stubs in the
  * ST startup / HAL files. No code generation or cmake registration needed.
  *
- * Communication peripherals (I2C, SPI)
+ * Communication peripherals (I2C, SPI, UART)
  * -------------------------------------
  * The IRQ handler calls the HAL handler to advance the HAL state machine.
  * When the HAL determines the transfer is complete it calls the HAL weak
@@ -44,6 +44,7 @@
 #include <chipz/core.hpp>
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
+#include <chipz/interfaces/uart_interface.hpp>
 #include "irq.hpp"
 #include "stm32h5xx_hal.h"
 
@@ -68,6 +69,11 @@ __attribute__((weak)) extern SPI_HandleTypeDef hspi1;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi3;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi4;
+
+__attribute__((weak)) extern UART_HandleTypeDef huart1;
+__attribute__((weak)) extern UART_HandleTypeDef huart2;
+__attribute__((weak)) extern UART_HandleTypeDef huart3;
+__attribute__((weak)) extern UART_HandleTypeDef huart4;
 }
 
 // chipz interface objects — always defined in config.cpp
@@ -79,6 +85,11 @@ extern chipz::interfaces::SPIInterface g_spi1;
 extern chipz::interfaces::SPIInterface g_spi2;
 extern chipz::interfaces::SPIInterface g_spi3;
 extern chipz::interfaces::SPIInterface g_spi4;
+
+extern chipz::interfaces::UARTInterface g_uart1;
+extern chipz::interfaces::UARTInterface g_uart2;
+extern chipz::interfaces::UARTInterface g_uart3;
+extern chipz::interfaces::UARTInterface g_uart4;
 
 extern "C" {
 
@@ -140,6 +151,15 @@ void SPI1_IRQHandler() { HAL_SPI_IRQHandler(&hspi1); }
 void SPI2_IRQHandler() { HAL_SPI_IRQHandler(&hspi2); }
 void SPI3_IRQHandler() { HAL_SPI_IRQHandler(&hspi3); }
 void SPI4_IRQHandler() { HAL_SPI_IRQHandler(&hspi4); }
+
+// ---------------------------------------------------------------------------
+// UART IRQ handlers
+// ---------------------------------------------------------------------------
+
+void USART1_IRQHandler() { HAL_UART_IRQHandler(&huart1); }
+void USART2_IRQHandler() { HAL_UART_IRQHandler(&huart2); }
+void USART3_IRQHandler() { HAL_UART_IRQHandler(&huart3); }
+void UART4_IRQHandler()  { HAL_UART_IRQHandler(&huart4); }
 
 } // extern "C"
 
@@ -218,4 +238,36 @@ extern "C" void HAL_SPI_ErrorCallback(SPI_HandleTypeDef* h) {
     if (&hspi2 && h == &hspi2) { g_spi2.notifyError(); return; }
     if (&hspi3 && h == &hspi3) { g_spi3.notifyError(); return; }
     if (&hspi4 && h == &hspi4) { g_spi4.notifyError(); return; }
+}
+
+// ---------------------------------------------------------------------------
+// HAL UART weak callback overrides
+// ---------------------------------------------------------------------------
+
+extern "C" void HAL_UART_TxCpltCallback(UART_HandleTypeDef* h) {
+    if (&huart1 && h == &huart1) { g_uart1.notifyTxComplete(); return; }
+    if (&huart2 && h == &huart2) { g_uart2.notifyTxComplete(); return; }
+    if (&huart3 && h == &huart3) { g_uart3.notifyTxComplete(); return; }
+    if (&huart4 && h == &huart4) { g_uart4.notifyTxComplete(); return; }
+}
+
+extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef* h) {
+    if (&huart1 && h == &huart1) { g_uart1.notifyRxComplete(); return; }
+    if (&huart2 && h == &huart2) { g_uart2.notifyRxComplete(); return; }
+    if (&huart3 && h == &huart3) { g_uart3.notifyRxComplete(); return; }
+    if (&huart4 && h == &huart4) { g_uart4.notifyRxComplete(); return; }
+}
+
+extern "C" void HAL_UART_ErrorCallback(UART_HandleTypeDef* h) {
+    if (&huart1 && h == &huart1) { g_uart1.notifyError(); return; }
+    if (&huart2 && h == &huart2) { g_uart2.notifyError(); return; }
+    if (&huart3 && h == &huart3) { g_uart3.notifyError(); return; }
+    if (&huart4 && h == &huart4) { g_uart4.notifyError(); return; }
+}
+
+extern "C" void HAL_UART_AbortCpltCallback(UART_HandleTypeDef* h) {
+    if (&huart1 && h == &huart1) { g_uart1.notifyError(); return; }
+    if (&huart2 && h == &huart2) { g_uart2.notifyError(); return; }
+    if (&huart3 && h == &huart3) { g_uart3.notifyError(); return; }
+    if (&huart4 && h == &huart4) { g_uart4.notifyError(); return; }
 }
