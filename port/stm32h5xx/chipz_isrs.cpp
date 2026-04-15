@@ -122,11 +122,9 @@ extern "C" {
 // Cortex-M exception handlers
 // ---------------------------------------------------------------------------
 
-void NMI_Handler()        { while (1) {} }
-void HardFault_Handler()  { while (1) {} }
-void MemManage_Handler()  { while (1) {} }
-void BusFault_Handler()   { while (1) {} }
-void UsageFault_Handler() { while (1) {} }
+void NMI_Handler() { while (1) {} }
+// HardFault_Handler, MemManage_Handler, BusFault_Handler, and UsageFault_Handler
+// are defined in fault_handlers.cpp — add that file to your project source list.
 void SVC_Handler()        {}
 void DebugMon_Handler()   {}
 void PendSV_Handler()     {}

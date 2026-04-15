@@ -58,6 +58,7 @@ chipz_add_max6675(TARGET ${CMAKE_PROJECT_NAME})
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ../../port/stm32h5xx/config.cpp
     ../../port/stm32h5xx/chipz_isrs.cpp
+    ../../port/stm32h5xx/fault_handlers.cpp
     Chipz/app.cpp
 )
 
