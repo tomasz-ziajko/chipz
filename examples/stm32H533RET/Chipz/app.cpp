@@ -21,8 +21,8 @@
  * to check whether the scheduler deadline has elapsed and fire on_elapsed_().
  */
 
-#include <chipz/core.hpp>
-#include <chipz/timer_interface.hpp>
+#include <chipz/core/core.hpp>
+#include <chipz/core/timer_interface.hpp>
 #include <chipz/devices/ds3231.hpp>
 #include <chipz/devices/max6675.hpp>
 #include <chipz/interfaces/i2c_interface.hpp>

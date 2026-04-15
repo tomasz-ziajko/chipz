@@ -5,8 +5,8 @@
 #ifndef CHIPZ_INTERFACES_PARALLEL_INTERFACE_HPP
 #define CHIPZ_INTERFACES_PARALLEL_INTERFACE_HPP
 
-#include "../communication_interface.hpp"
-#include "../concepts.hpp"
+#include "../core/communication_interface.hpp"
+#include "../core/concepts.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstdint>

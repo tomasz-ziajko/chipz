@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_MCP795W_HPP
 #define CHIPZ_DEVICES_MCP795W_HPP
 
-#include <chipz/chip.hpp>
+#include <chipz/core/chip.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <ctime>

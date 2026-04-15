@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_DS3231_HPP
 #define CHIPZ_DEVICES_DS3231_HPP
 
-#include <chipz/chip.hpp>
+#include <chipz/core/chip.hpp>
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <cstdint>
 #include <ctime>

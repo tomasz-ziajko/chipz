@@ -20,15 +20,19 @@ target_sources(chipz_core INTERFACE
     FILE_SET HEADERS
     BASE_DIRS include
     FILES
-        include/chipz/peripheral.hpp
-        include/chipz/communication_interface.hpp
-        include/chipz/concepts.hpp
-        include/chipz/isr_source.hpp
-        include/chipz/timer_interface.hpp
-        include/chipz/core.hpp
         include/chipz/chipz.hpp
+        include/chipz/core/chip.hpp
+        include/chipz/core/communication_interface.hpp
+        include/chipz/core/concepts.hpp
+        include/chipz/core/timer_interface.hpp
+        include/chipz/core/core.hpp
+        include/chipz/core/completion_sources/timer_completion_source.hpp
+        include/chipz/core/completion_sources/external_completion_source.hpp
         include/chipz/interfaces/i2c_interface.hpp
         include/chipz/interfaces/spi_interface.hpp
+        include/chipz/interfaces/uart_interface.hpp
+        include/chipz/interfaces/parallel_interface.hpp
+        include/chipz/network/can/can_interface.hpp
 )
 target_compile_features(chipz_core INTERFACE cxx_std_20)
 add_library(chipz::core ALIAS chipz_core)

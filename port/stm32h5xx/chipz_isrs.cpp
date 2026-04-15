@@ -41,11 +41,11 @@
  * chipz_systick_tick() (application-defined, calls SysTickTimer::onSysTick()).
  */
 
-#include <chipz/core.hpp>
+#include <chipz/core/core.hpp>
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <chipz/interfaces/uart_interface.hpp>
-#include <chipz/interfaces/can_interface.hpp>
+#include <chipz/network/can/can_interface.hpp>
 #include "irq.hpp"
 #include "stm32h5xx_hal.h"
 
@@ -86,6 +86,7 @@ __attribute__((weak)) extern UART_HandleTypeDef huart4;
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan1;
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
 #endif
+
 }
 
 // chipz interface objects — defined in config.cpp, guarded by the same macros
@@ -110,9 +111,10 @@ extern chipz::interfaces::UARTInterface g_uart4;
 #endif
 
 #ifdef HAL_FDCAN_MODULE_ENABLED
-extern chipz::interfaces::CANInterface<> g_can1;
-extern chipz::interfaces::CANInterface<> g_can2;
+extern chipz::network::CANInterfaceBase* g_can1;
+extern chipz::network::CANInterfaceBase* g_can2;
 #endif
+
 
 extern "C" {
 
@@ -336,28 +338,39 @@ extern "C" void HAL_UART_AbortCpltCallback(UART_HandleTypeDef* h) {
 #ifdef HAL_FDCAN_MODULE_ENABLED
 
 extern "C" void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef* h, uint32_t) {
-    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyTxComplete(); return; }
-    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyTxComplete(); return; }
+    if (&hfdcan1 && h == &hfdcan1) { g_can1->notifyTxComplete(); return; }
+    if (&hfdcan2 && h == &hfdcan2) { g_can2->notifyTxComplete(); return; }
+}
+
+static void fdcan_rx_dispatch(FDCAN_HandleTypeDef* h, uint32_t fifo,
+                              chipz::network::CANInterfaceBase* iface) {
+    FDCAN_RxHeaderTypeDef hdr{};
+    uint8_t buf[64]{};
+    if (HAL_FDCAN_GetRxMessage(h, fifo, &hdr, buf) != HAL_OK) return;
+    uint8_t dlc    = static_cast<uint8_t>((hdr.DataLength >> 16U) & 0x0FU);
+    uint8_t length = chipz::network::dlcToLength(dlc);
+    iface->notifyRxComplete(hdr.Identifier, buf, length);
 }
 
 extern "C" void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef* h, uint32_t) {
-    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyRxComplete(); return; }
-    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyRxComplete(); return; }
+    if (&hfdcan1 && h == &hfdcan1) { fdcan_rx_dispatch(h, FDCAN_RX_FIFO0, g_can1); return; }
+    if (&hfdcan2 && h == &hfdcan2) { fdcan_rx_dispatch(h, FDCAN_RX_FIFO0, g_can2); return; }
 }
 
 extern "C" void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef* h, uint32_t) {
-    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyRxComplete(); return; }
-    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyRxComplete(); return; }
+    if (&hfdcan1 && h == &hfdcan1) { fdcan_rx_dispatch(h, FDCAN_RX_FIFO1, g_can1); return; }
+    if (&hfdcan2 && h == &hfdcan2) { fdcan_rx_dispatch(h, FDCAN_RX_FIFO1, g_can2); return; }
 }
 
 extern "C" void HAL_FDCAN_ErrorCallback(FDCAN_HandleTypeDef* h) {
-    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyError(); return; }
-    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyError(); return; }
+    if (&hfdcan1 && h == &hfdcan1) { g_can1->notifyError(); return; }
+    if (&hfdcan2 && h == &hfdcan2) { g_can2->notifyError(); return; }
 }
 
 extern "C" void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef* h, uint32_t) {
-    if (&hfdcan1 && h == &hfdcan1) { g_can1.notifyError(); return; }
-    if (&hfdcan2 && h == &hfdcan2) { g_can2.notifyError(); return; }
+    if (&hfdcan1 && h == &hfdcan1) { g_can1->notifyError(); return; }
+    if (&hfdcan2 && h == &hfdcan2) { g_can2->notifyError(); return; }
 }
 
 #endif // HAL_FDCAN_MODULE_ENABLED
+

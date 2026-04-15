@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_MAX6675_HPP
 #define CHIPZ_DEVICES_MAX6675_HPP
 
-#include <chipz/chip.hpp>
+#include <chipz/core/chip.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <functional>
