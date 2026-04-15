@@ -5,7 +5,7 @@
 #ifndef CHIPZ_DEVICES_HD44780_HPP
 #define CHIPZ_DEVICES_HD44780_HPP
 
-#include <chipz/chip.hpp>
+#include <chipz/core/chip.hpp>
 #include <cstdint>
 #include <string>
 

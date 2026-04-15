@@ -8,17 +8,18 @@
 // Main chipz library header
 // Include this to get access to all chipz functionality
 
-#include "chip.hpp"
-#include "timer_interface.hpp"
-#include "core.hpp"
-#include "communication_interface.hpp"
-#include "concepts.hpp"
+#include "core/chip.hpp"
+#include "core/timer_interface.hpp"
+#include "core/core.hpp"
+#include "core/communication_interface.hpp"
+#include "core/concepts.hpp"
 #include "interfaces/i2c_interface.hpp"
 #include "interfaces/spi_interface.hpp"
 #include "interfaces/uart_interface.hpp"
+#include "network/can/can_interface.hpp"
 #include "interfaces/parallel_interface.hpp"
-#include "completion_sources/timer_completion_source.hpp"
-#include "completion_sources/external_completion_source.hpp"
+#include "core/completion_sources/timer_completion_source.hpp"
+#include "core/completion_sources/external_completion_source.hpp"
 #include <chipz/devices/ds3231.hpp>
 #include <chipz/devices/hd44780.hpp>
 #include <chipz/devices/max6675.hpp>

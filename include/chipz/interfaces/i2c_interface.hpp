@@ -5,7 +5,7 @@
 #ifndef CHIPZ_INTERFACES_I2C_INTERFACE_HPP
 #define CHIPZ_INTERFACES_I2C_INTERFACE_HPP
 
-#include "../communication_interface.hpp"
+#include "../core/communication_interface.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <array>

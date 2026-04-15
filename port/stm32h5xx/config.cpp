@@ -51,6 +51,7 @@
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include <chipz/interfaces/uart_interface.hpp>
+#include <chipz/network/can/can_interface.hpp>
 
 #include "stm32h5xx_hal.h"
 
@@ -59,25 +60,39 @@
 // ---------------------------------------------------------------------------
 
 extern "C" {
+#ifdef HAL_I2C_MODULE_ENABLED
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c1;
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c2;
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c3;
 __attribute__((weak)) extern I2C_HandleTypeDef hi2c4;
+#endif
 
+#ifdef HAL_SPI_MODULE_ENABLED
 __attribute__((weak)) extern SPI_HandleTypeDef hspi1;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi3;
 __attribute__((weak)) extern SPI_HandleTypeDef hspi4;
+#endif
 
+#ifdef HAL_UART_MODULE_ENABLED
 __attribute__((weak)) extern UART_HandleTypeDef huart1;
 __attribute__((weak)) extern UART_HandleTypeDef huart2;
 __attribute__((weak)) extern UART_HandleTypeDef huart3;
 __attribute__((weak)) extern UART_HandleTypeDef huart4;
+#endif
+
+#ifdef HAL_FDCAN_MODULE_ENABLED
+__attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan1;
+__attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
+#endif
+
 }
 
 // ---------------------------------------------------------------------------
 // I2C bus interfaces
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_I2C_MODULE_ENABLED
 
 chipz::interfaces::I2CInterface g_i2c1{
     [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
@@ -135,9 +150,13 @@ chipz::interfaces::I2CInterface g_i2c4{
     }
 };
 
+#endif // HAL_I2C_MODULE_ENABLED
+
 // ---------------------------------------------------------------------------
 // SPI bus interfaces (no chip select — see file header)
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_SPI_MODULE_ENABLED
 
 chipz::interfaces::SPIInterface g_spi1{
     [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
@@ -163,9 +182,13 @@ chipz::interfaces::SPIInterface g_spi4{
     }
 };
 
+#endif // HAL_SPI_MODULE_ENABLED
+
 // ---------------------------------------------------------------------------
 // UART interfaces
 // ---------------------------------------------------------------------------
+
+#ifdef HAL_UART_MODULE_ENABLED
 
 chipz::interfaces::UARTInterface g_uart1{
     [](const uint8_t* data, uint16_t len) -> int {
@@ -202,3 +225,62 @@ chipz::interfaces::UARTInterface g_uart4{
         return HAL_UART_Receive_IT(&huart4, buf, len);
     }
 };
+
+#endif // HAL_UART_MODULE_ENABLED
+
+// ---------------------------------------------------------------------------
+// FDCAN interfaces
+//
+// Define your application's RX message types below, then add them as
+// template arguments to AppCANInterface1 / AppCANInterface2.
+//
+// Example:
+//   using EngineSpeed = chipz::network::CANMessage<0x100, 2>;
+//   using ThrottlePos = chipz::network::CANMessage<0x101, 1>;
+//   using AppCANInterface1 = chipz::network::CANInterface<3, EngineSpeed, ThrottlePos>;
+//
+// TX messages do not need to be registered — call g_can1.transmit(msg)
+// with any CANMessage type directly.
+//
+// TxFifoDepth=3 matches the STM32H5xx FDCAN TX FIFO depth. Adjust if your
+// device or configuration differs.
+// ---------------------------------------------------------------------------
+
+#ifdef HAL_FDCAN_MODULE_ENABLED
+
+static int fdcan_tx(FDCAN_HandleTypeDef* h, uint32_t id, bool extended_id,
+                    bool fd_format, bool brs, const uint8_t* data, uint8_t length) {
+    FDCAN_TxHeaderTypeDef hdr{};
+    hdr.Identifier          = id;
+    hdr.IdType              = extended_id ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID;
+    hdr.TxFrameType         = FDCAN_DATA_FRAME;
+    hdr.DataLength          = static_cast<uint32_t>(chipz::network::lengthToDlc(length)) << 16U;
+    hdr.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    hdr.BitRateSwitch       = brs       ? FDCAN_BRS_ON  : FDCAN_BRS_OFF;
+    hdr.FDFormat            = fd_format ? FDCAN_FD_CAN  : FDCAN_CLASSIC_CAN;
+    hdr.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+    hdr.MessageMarker       = 0;
+    return HAL_FDCAN_AddMessageToTxFifoQ(h, &hdr, const_cast<uint8_t*>(data));
+}
+
+// Add your RX message types to the template argument list below
+using AppCANInterface1 = chipz::network::CANInterface<3>;
+using AppCANInterface2 = chipz::network::CANInterface<3>;
+
+static AppCANInterface1 s_can1{
+    [](uint32_t id, bool ext, bool fd, bool brs, const uint8_t* data, uint8_t len) -> int {
+        return fdcan_tx(&hfdcan1, id, ext, fd, brs, data, len);
+    }
+};
+
+static AppCANInterface2 s_can2{
+    [](uint32_t id, bool ext, bool fd, bool brs, const uint8_t* data, uint8_t len) -> int {
+        return fdcan_tx(&hfdcan2, id, ext, fd, brs, data, len);
+    }
+};
+
+chipz::network::CANInterfaceBase* g_can1 = &s_can1;
+chipz::network::CANInterfaceBase* g_can2 = &s_can2;
+
+#endif // HAL_FDCAN_MODULE_ENABLED
+
