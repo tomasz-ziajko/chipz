@@ -4,6 +4,8 @@
 # Build directories
 build/
 cmake-build-*/
+_deps/
+Testing/
 
 # CMake files
 CMakeCache.txt
