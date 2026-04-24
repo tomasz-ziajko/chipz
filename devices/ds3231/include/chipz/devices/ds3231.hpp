@@ -18,14 +18,11 @@ namespace devices {
 /**
  * @brief Driver for DS3231 Real-Time Clock (RTC) chip
  *
- * Scheduling:
- *   PreInit     — initial status read in flight (started in initialize());
- *                 suspends on WaitCondition::comm.
- *   ClearingOSF — OSF bit set; run() issues the clear write; suspends on
- *                 WaitCondition::comm.
- *   Idle        — dispatches pending application requests first
+ * Scheduling (coroutine):
+ *   PreInit     — reads status register on first resume; if OSF set, clears it.
+ *   Main loop   — dispatches pending application requests first
  *                 (time/alarm write, alarm read), then periodic reads:
- *                 time every TIME_READ_PERIOD_MS, status every
+ *                 time every kTimeReadPeriodMs, status every
  *                 kStatusReadInterval time-read cycles (~1 s).
  */
 class DS3231 : public Chip<interfaces::I2CInterface> {
@@ -41,7 +38,6 @@ public:
     explicit DS3231(interfaces::I2CInterface& comm)
         : Chip<interfaces::I2CInterface>(comm)
         , status_(Status::Uninitialized)
-        , state_(State::PreInit)
         , current_time_{}
         , time_update_request_(false)
         , alarm1_update_request_(false)
@@ -61,7 +57,10 @@ public:
         , control_status_(0)
         , aging_offset_(0)
         , temp_(0)
+        , last_transfer_ok_(false)
+        , clock_ready_(false)
     {}
+
 
     bool initialize() override {
         if (!get<interfaces::I2CInterface>().isReady()) {
@@ -72,7 +71,6 @@ public:
         setConnection<interfaces::I2CInterface>(
             get<interfaces::I2CInterface>().registerConnection(I2C_ADDRESS));
 
-        state_                 = State::PreInit;
         time_update_request_   = false;
         alarm1_update_request_ = false;
         alarm2_update_request_ = false;
@@ -80,13 +78,8 @@ public:
         alarm2_read_request_   = false;
         time_read_paused_      = false;
         status_read_countdown_ = kStatusReadInterval;
-
-        if (!this->receive<interfaces::I2CInterface>(
-                get<interfaces::I2CInterface>().getRxBuffer(),
-                STATUS_REGISTER_LENGTH)) {
-            status_ = Status::Error;
-            return false;
-        }
+        last_transfer_ok_      = false;
+        clock_ready_           = false;
 
         status_ = Status::Ready;
         return true;
@@ -100,7 +93,7 @@ public:
     bool isReady() const override {
         return status_ == Status::Ready &&
                get<interfaces::I2CInterface>().isReady() &&
-               state_ == State::Idle;
+               clock_ready_;
     }
 
     Status getStatus() const override { return status_; }
@@ -109,31 +102,101 @@ public:
 
     bool main() override { return true; }
 
-    WaitCondition run() override {
-        if (status_ != Status::Ready) return WaitCondition::demand();
+    DriverTask run() override {
+        auto& i2c = get<interfaces::I2CInterface>();
 
-        switch (state_) {
-            case State::PreInit:
-                // Status read started in initialize(); just wait for comm.
-                return WaitCondition::comm(get<interfaces::I2CInterface>());
+        // PreInit: read status register (fixes race — transfer starts here, not in initialize())
+        while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), STATUS_REGISTER_LENGTH))
+            co_yield WaitCondition::immediate();
+        co_yield WaitCondition::comm(i2c);
+        if (!last_transfer_ok_) {
+            status_ = Status::Error;
+            while (true) co_yield WaitCondition::demand();
+        }
+        deserializeStatus();
 
-            case State::ClearingOSF:
-                get<interfaces::I2CInterface>().getTxBuffer()[0] = control_;
-                get<interfaces::I2CInterface>().getTxBuffer()[1] =
-                    control_status_ & ~STATUS_REG_OSF_BIT;
-                if (!this->transmit<interfaces::I2CInterface>(
-                        get<interfaces::I2CInterface>().getTxBuffer(), 2)) {
-                    return WaitCondition::immediate();  // bus busy — retry
-                }
-                state_ = State::WritingOSF;
-                return WaitCondition::comm(get<interfaces::I2CInterface>());
+        // Clear OSF if set
+        if (control_status_ & STATUS_REG_OSF_BIT) {
+            i2c.getTxBuffer()[0] = control_;
+            i2c.getTxBuffer()[1] = control_status_ & ~STATUS_REG_OSF_BIT;
+            while (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), 2))
+                co_yield WaitCondition::immediate();
+            co_yield WaitCondition::comm(i2c);
+        }
 
-            case State::Idle:
-                return dispatchIdle();
+        clock_ready_ = true;
 
-            default:
-                // A comm-awaited state re-entered without a comm event.
-                return WaitCondition::comm(get<interfaces::I2CInterface>());
+        while (true) {
+            if (status_ != Status::Ready) {
+                co_yield WaitCondition::demand();
+                continue;
+            }
+
+            if (time_update_request_) {
+                serializeCurrentTime();
+                while (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), TIME_REGISTER_LENGTH))
+                    co_yield WaitCondition::immediate();
+                time_update_request_ = false;
+                co_yield WaitCondition::comm(i2c);
+                if (!last_transfer_ok_) status_ = Status::Error;
+                continue;
+            }
+
+            if (alarm1_update_request_) {
+                serializeAlarm1();
+                while (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), ALARM1_LENGTH))
+                    co_yield WaitCondition::immediate();
+                alarm1_update_request_ = false;
+                co_yield WaitCondition::comm(i2c);
+                if (!last_transfer_ok_) status_ = Status::Error;
+                continue;
+            }
+
+            if (alarm2_update_request_) {
+                serializeAlarm2();
+                while (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), ALARM2_LENGTH))
+                    co_yield WaitCondition::immediate();
+                alarm2_update_request_ = false;
+                co_yield WaitCondition::comm(i2c);
+                if (!last_transfer_ok_) status_ = Status::Error;
+                continue;
+            }
+
+            if (alarm1_read_request_) {
+                while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), ALARM1_LENGTH))
+                    co_yield WaitCondition::immediate();
+                alarm1_read_request_ = false;
+                co_yield WaitCondition::comm(i2c);
+                if (last_transfer_ok_) deserializeAlarm1();
+                continue;
+            }
+
+            if (alarm2_read_request_) {
+                while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), ALARM2_LENGTH))
+                    co_yield WaitCondition::immediate();
+                alarm2_read_request_ = false;
+                co_yield WaitCondition::comm(i2c);
+                if (last_transfer_ok_) deserializeAlarm2();
+                continue;
+            }
+
+            if (--status_read_countdown_ == 0) {
+                status_read_countdown_ = kStatusReadInterval;
+                while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), STATUS_REGISTER_LENGTH))
+                    co_yield WaitCondition::immediate();
+                co_yield WaitCondition::comm(i2c);
+                if (last_transfer_ok_) deserializeStatus();
+                continue;
+            }
+
+            if (!time_read_paused_) {
+                while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), TIME_REGISTER_LENGTH))
+                    co_yield WaitCondition::immediate();
+                co_yield WaitCondition::comm(i2c);
+                if (last_transfer_ok_) deserializeCurrentTime();
+            }
+
+            co_yield WaitCondition::delayMs(kTimeReadPeriodMs);
         }
     }
 
@@ -236,22 +299,7 @@ public:
     }
 
 private:
-    enum class State {
-        PreInit,       // init status read in flight
-        ClearingOSF,   // OSF set; need to issue clear write
-        WritingOSF,    // OSF clear write in flight
-        Idle,          // nothing in flight; next run() dispatches
-        ReadingTime,
-        ReadingStatus,
-        WritingTime,
-        WritingAlarm1,
-        WritingAlarm2,
-        ReadingAlarm1,
-        ReadingAlarm2,
-    };
-
     Status  status_;
-    State   state_;
     std::tm current_time_;
 
     bool    time_update_request_;
@@ -266,6 +314,8 @@ private:
     uint8_t alarm2_minutes_, alarm2_hours_, alarm2_day_date_;
     uint8_t control_, control_status_, aging_offset_;
     int16_t temp_;
+    bool    last_transfer_ok_;
+    bool    clock_ready_;
 
     static constexpr uint8_t  I2C_ADDRESS           = 0x68;
     static constexpr uint8_t  TIME_REGISTER_LENGTH   = 7;
@@ -276,122 +326,8 @@ private:
     static constexpr uint32_t kTimeReadPeriodMs      = 100;
     static constexpr uint8_t  kStatusReadInterval    = 10; // 10 × 100 ms ≈ 1 s
 
-    // Dispatches a single operation from the Idle state.
-    // Application requests take priority over periodic reads.
-    // Countdown only decrements when no request is pending.
-    WaitCondition dispatchIdle() {
-        auto& i2c = get<interfaces::I2CInterface>();
-
-        if (time_update_request_) {
-            serializeCurrentTime();
-            if (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), TIME_REGISTER_LENGTH))
-                return WaitCondition::immediate();
-            time_update_request_ = false;
-            state_ = State::WritingTime;
-            return WaitCondition::comm(i2c);
-        }
-
-        if (alarm1_update_request_) {
-            serializeAlarm1();
-            if (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), ALARM1_LENGTH))
-                return WaitCondition::immediate();
-            alarm1_update_request_ = false;
-            state_ = State::WritingAlarm1;
-            return WaitCondition::comm(i2c);
-        }
-
-        if (alarm2_update_request_) {
-            serializeAlarm2();
-            if (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), ALARM2_LENGTH))
-                return WaitCondition::immediate();
-            alarm2_update_request_ = false;
-            state_ = State::WritingAlarm2;
-            return WaitCondition::comm(i2c);
-        }
-
-        if (alarm1_read_request_) {
-            if (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), ALARM1_LENGTH))
-                return WaitCondition::immediate();
-            alarm1_read_request_ = false;
-            state_ = State::ReadingAlarm1;
-            return WaitCondition::comm(i2c);
-        }
-
-        if (alarm2_read_request_) {
-            if (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), ALARM2_LENGTH))
-                return WaitCondition::immediate();
-            alarm2_read_request_ = false;
-            state_ = State::ReadingAlarm2;
-            return WaitCondition::comm(i2c);
-        }
-
-        // Periodic: status read every kStatusReadInterval time-read cycles.
-        if (--status_read_countdown_ == 0) {
-            status_read_countdown_ = kStatusReadInterval;
-            if (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), STATUS_REGISTER_LENGTH))
-                return WaitCondition::immediate();
-            state_ = State::ReadingStatus;
-            return WaitCondition::comm(i2c);
-        }
-
-        if (!time_read_paused_) {
-            if (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), TIME_REGISTER_LENGTH))
-                return WaitCondition::immediate();
-            state_ = State::ReadingTime;
-            return WaitCondition::comm(i2c);
-        }
-
-        return WaitCondition::delayMs(kTimeReadPeriodMs);
-    }
-
     void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
-        if (!success) {
-            status_ = Status::Error;
-            state_  = State::Idle;
-            return;
-        }
-
-        switch (state_) {
-            case State::PreInit:
-                deserializeStatus();
-                state_ = (control_status_ & STATUS_REG_OSF_BIT)
-                       ? State::ClearingOSF
-                       : State::Idle;
-                break;
-
-            case State::WritingOSF:
-                state_ = State::Idle;
-                break;
-
-            case State::ReadingTime:
-                deserializeCurrentTime();
-                state_ = State::Idle;
-                break;
-
-            case State::ReadingStatus:
-                deserializeStatus();
-                state_ = State::Idle;
-                break;
-
-            case State::WritingTime:
-            case State::WritingAlarm1:
-            case State::WritingAlarm2:
-                state_ = State::Idle;
-                break;
-
-            case State::ReadingAlarm1:
-                deserializeAlarm1();
-                state_ = State::Idle;
-                break;
-
-            case State::ReadingAlarm2:
-                deserializeAlarm2();
-                state_ = State::Idle;
-                break;
-
-            default:
-                break;
-        }
+        last_transfer_ok_ = success;
     }
 
     void serializeCurrentTime() {

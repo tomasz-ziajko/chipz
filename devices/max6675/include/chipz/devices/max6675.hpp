@@ -18,11 +18,10 @@ namespace devices {
  *
  * Temperature resolution: 0.25°C (12-bit)
  * Update rate: ~220ms (internal MAX6675 conversion)
- * Reading period: READ_PERIOD_MS (1000ms)
+ * Reading period: kReadPeriodMs (1000ms)
  *
- * Scheduling:
- *   StartRead — kicks off a 2-byte SPI receive, suspends on WaitCondition::comm.
- *   WaitDelay — entered from onTransferComplete; suspends on WaitCondition::delayMs.
+ * Scheduling (coroutine):
+ *   Loop: receive (retry immediate if bus busy) → co_yield comm → deserialize → co_yield delayMs.
  */
 class MAX6675 : public Chip<interfaces::SPIInterface> {
 public:
@@ -31,7 +30,7 @@ public:
         , status_(Status::Uninitialized)
         , temperature_(0)
         , connection_open_(false)
-        , state_(State::StartRead)
+        , last_transfer_ok_(false)
     {}
 
     bool initialize() override {
@@ -39,10 +38,10 @@ public:
             status_ = Status::Error;
             return false;
         }
-        temperature_    = 0;
+        temperature_     = 0;
         connection_open_ = false;
-        state_          = State::StartRead;
-        status_         = Status::Ready;
+        last_transfer_ok_ = false;
+        status_          = Status::Ready;
         return true;
     }
 
@@ -59,26 +58,23 @@ public:
 
     std::string getDeviceId() const override { return "MAX6675"; }
 
-    bool main() override { return true; }  // replaced by run()
+    bool main() override { return true; }
 
-    WaitCondition run() override {
-        if (status_ != Status::Ready) return WaitCondition::demand();
-
-        switch (state_) {
-            case State::StartRead:
-                if (!receive<interfaces::SPIInterface>(
-                        get<interfaces::SPIInterface>().getRxBuffer(),
-                        kTransferLength)) {
-                    return WaitCondition::immediate();  // bus busy — retry next cycle
-                }
-                return WaitCondition::comm(get<interfaces::SPIInterface>());
-
-            case State::WaitDelay:
-                state_ = State::StartRead;
-                return WaitCondition::delayMs(kReadPeriodMs);
+    DriverTask run() override {
+        while (true) {
+            if (status_ != Status::Ready) {
+                co_yield WaitCondition::demand();
+                continue;
+            }
+            if (!receive<interfaces::SPIInterface>(
+                    get<interfaces::SPIInterface>().getRxBuffer(), kTransferLength)) {
+                co_yield WaitCondition::immediate();
+                continue;
+            }
+            co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+            if (last_transfer_ok_) deserialize();
+            co_yield WaitCondition::delayMs(kReadPeriodMs);
         }
-
-        return WaitCondition::immediate();
     }
 
     uint32_t getTemperature()       const { return temperature_; }
@@ -87,20 +83,17 @@ public:
     bool     isThermocoupleConnected()  const { return !connection_open_; }
 
 private:
-    enum class State { StartRead, WaitDelay };
-
     Status   status_;
     uint32_t temperature_;
     bool     connection_open_;
-    State    state_;
+    bool     last_transfer_ok_;
 
     static constexpr float    kResolution   = 0.25f;
     static constexpr uint16_t kTransferLength = 2;
     static constexpr uint32_t kReadPeriodMs  = 1000;
 
     void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
-        if (success) deserialize();
-        state_ = State::WaitDelay;  // retry after delay regardless of success
+        last_transfer_ok_ = success;
     }
 
     void deserialize() {

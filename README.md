@@ -6,31 +6,32 @@ A C++20 header-only library of interrupt-driven embedded peripheral drivers. chi
 
 chipz separates three concerns:
 
-- **`Core`** — scheduler and ISR router. Registered peripherals are called only when a hardware interrupt fires on their bus, a deadline elapses, or another explicit condition is satisfied. One hardware timer drives all deadline-based scheduling.
-- **`Chip<CommInterfaces...>`** — base class for device drivers. Drivers implement `run()` and return a `WaitCondition` that tells Core exactly when to call them next — no spurious calls.
+- **`Core`** — scheduler and ISR router. Registered peripherals are resumed only when a hardware interrupt fires on their bus, a deadline elapses, or another explicit condition is satisfied. One hardware timer drives all deadline-based scheduling.
+- **`Chip<CommInterfaces...>`** — base class for device drivers. Drivers implement `run()` as a C++20 coroutine that `co_yield`s a `WaitCondition` to tell Core exactly when to resume next — no spurious calls.
 - **Communication interfaces** (`I2CInterface`, `SPIInterface`, `UARTInterface`, `ParallelInterface`) — thin wrappers around HAL IT functions. One instance per physical bus; multiple chips may share the same bus.
 
 Execution model:
 1. Hardware ISRs set atomic flags only — no driver code runs in interrupt context.
-2. `Core::service()` (called from the main loop) processes pending flags in three passes:
+2. `Core::add()` calls `run()` once per driver to obtain a `DriverTask` coroutine handle, stored for the lifetime of the driver.
+3. `Core::service()` (called from the main loop) processes pending flags in three passes:
    - **Pass 1a** — non-comm IRQs routed via `onIRQ()`; IRQ-waiting drivers marked runnable.
    - **Pass 1b** — comm interrupts routed via `onInterrupt()`; comm-waiting drivers marked runnable.
-   - **Pass 2** — runnable drivers called in priority order; each driver's `run()` return value sets its next `WaitCondition`.
+   - **Pass 2** — runnable drivers resumed in priority order; the `WaitCondition` the coroutine `co_yield`s sets its next wait.
 
 ## Scheduling — WaitCondition
 
-`ChipBase::run()` returns a `WaitCondition` that suspends the driver until a specific event:
+Drivers are C++20 coroutines. `run()` is called once; the returned `DriverTask` handle is stored by Core and resumed whenever the driver's wait condition is satisfied. The driver `co_yield`s a `WaitCondition` to declare what it is waiting for:
 
 | Condition | Meaning |
 |-----------|---------|
-| `WaitCondition::immediate()` | Call `run()` next `service()` cycle |
-| `WaitCondition::delayMs(N)` | Call `run()` after N milliseconds |
-| `WaitCondition::delayUs(N)` | Call `run()` after N microseconds |
-| `WaitCondition::comm(iface)` | Call `run()` when any interrupt fires on `iface` (TransferComplete, Error, ArbitrationLost) |
-| `WaitCondition::irq(irqn)` | Call `run()` when hardware IRQ `irqn` fires |
-| `WaitCondition::demand()` | Call `run()` only when `Core::wake(chip)` is called |
+| `WaitCondition::immediate()` | Resume next `service()` cycle |
+| `WaitCondition::delayMs(N)` | Resume after N milliseconds |
+| `WaitCondition::delayUs(N)` | Resume after N microseconds |
+| `WaitCondition::comm(iface)` | Resume when any interrupt fires on `iface` (TransferComplete, Error, ArbitrationLost) |
+| `WaitCondition::irq(irqn)` | Resume when hardware IRQ `irqn` fires |
+| `WaitCondition::demand()` | Resume only when `Core::wake(chip)` is called |
 
-Legacy drivers that override `main()` instead of `run()` continue to work — the default `run()` delegates to `main()` and returns `immediate()`.
+Legacy drivers that override `main()` instead of `run()` continue to work — the default `run()` wraps `main()` in an infinite coroutine loop and yields `immediate()` each iteration.
 
 ## Supported Devices
 
@@ -108,7 +109,9 @@ extern "C" void chipz_app_run() {
 
 ## Writing a Driver
 
-### Event-driven (new style)
+### Coroutine style (current)
+
+`run()` is a C++20 coroutine. `co_yield` suspends the driver and declares what to wait for next. `onTransferComplete()` stores the result; the coroutine reads it after resuming.
 
 ```cpp
 #include <chipz/core/chip.hpp>
@@ -117,41 +120,39 @@ extern "C" void chipz_app_run() {
 class MyDevice : public chipz::Chip<chipz::interfaces::I2CInterface> {
 public:
     explicit MyDevice(chipz::interfaces::I2CInterface& i2c)
-        : chipz::Chip<chipz::interfaces::I2CInterface>(i2c) {}
+        : chipz::Chip<chipz::interfaces::I2CInterface>(i2c)
+        , last_transfer_ok_(false) {}
 
     bool initialize() override {
         setConnection<chipz::interfaces::I2CInterface>(
             get<chipz::interfaces::I2CInterface>().registerConnection(0x48));
+        last_transfer_ok_ = false;
         return true;
     }
     bool reset()             override { return initialize(); }
     bool isReady()     const override { return true; }
     Status getStatus() const override { return Status::Ready; }
     std::string getDeviceId() const override { return "MyDevice"; }
-    bool main()              override { return true; }  // replaced by run()
+    bool main()              override { return true; }
 
-    chipz::WaitCondition run() override {
-        switch (state_) {
-            case State::Idle:
-                transmit<chipz::interfaces::I2CInterface>(cmd_, sizeof(cmd_));
-                state_ = State::WaitingReply;
-                return chipz::WaitCondition::comm(get<chipz::interfaces::I2CInterface>());
-
-            case State::WaitingReply:
-                process(get<chipz::interfaces::I2CInterface>().getRxBuffer());
-                state_ = State::Idle;
-                return chipz::WaitCondition::delayMs(100);
+    chipz::DriverTask run() override {
+        auto& i2c = get<chipz::interfaces::I2CInterface>();
+        while (true) {
+            transmit<chipz::interfaces::I2CInterface>(cmd_, sizeof(cmd_));
+            co_yield chipz::WaitCondition::comm(i2c);
+            if (last_transfer_ok_)
+                process(i2c.getRxBuffer());
+            co_yield chipz::WaitCondition::delayMs(100);
         }
-        return chipz::WaitCondition::immediate();
     }
 
 protected:
     void onTransferComplete(chipz::CommunicationInterface&, bool success) override {
-        if (!success) state_ = State::Idle;
+        last_transfer_ok_ = success;
     }
 
 private:
-    enum class State { Idle, WaitingReply } state_ = State::Idle;
+    bool    last_transfer_ok_;
     uint8_t cmd_[2]{};
 };
 ```
@@ -238,8 +239,7 @@ chipz/
 
 ## Known Issues / TODO
 
-- **Driver migration**: DS3231, MAX6675, HD44780 still use the legacy `main()` + `defer_ms_` pattern. Migration to `run()` + `WaitCondition` is pending per-driver.
-- **Test coverage**: ~25 tests total; TJA1145 and MCP795W have zero tests; no interrupt flow or multi-peripheral tests.
+- **Test coverage**: ~25 tests total; TJA1145 and MCP795W have zero tests; no interrupt flow or multi-peripheral tests. Existing tests were written against the old `run()` + `WaitCondition` pattern and may need updating for the coroutine model.
 - **CAN scheduling**: `CANInterface` dispatches RX callbacks directly from ISR context. A future `Core`-integrated network scheduling mechanism will buffer frames and dispatch in `service()`.
 
 ## License

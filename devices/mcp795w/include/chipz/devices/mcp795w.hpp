@@ -48,7 +48,7 @@ public:
         , set_alarm_request_(false)
         , disable_request_(false)
         , shutdown_allowed_(false)
-        , state_(State::Idle)
+        , last_transfer_ok_(false)
         , get_spi_transmission_disabled_(get_spi_transmission_disabled)
     {
     }
@@ -61,12 +61,12 @@ public:
         }
 
         // Reset state
-        shutdown_allowed_ = false;
-        disable_request_ = false;
-        clock_started_ = false;
+        shutdown_allowed_  = false;
+        disable_request_   = false;
+        clock_started_     = false;
         date_reset_request_ = false;
         set_alarm_request_ = false;
-        state_ = State::Idle;
+        last_transfer_ok_  = false;
 
         // Initialize default time (10:10)
         current_time_ = {};
@@ -96,39 +96,41 @@ public:
 
     bool main() override { return true; }
 
-    WaitCondition run() override {
-        if (status_ != Status::Ready) return WaitCondition::demand();
-
-        switch (state_) {
-            case State::Idle: {
-                if (get_spi_transmission_disabled_ && get_spi_transmission_disabled_()) {
-                    return WaitCondition::delayMs(kPollPeriodMs);
-                }
-                if (!shutdown_allowed_) {
-                    if (set_alarm_request_) {
-                        set_alarm_request_ = false;
-                        state_ = State::WritingAlarm;
-                        buildAlarm();
-                        return WaitCondition::comm(get<interfaces::SPIInterface>());
-                    }
-                    if (date_reset_request_) {
-                        date_reset_request_ = false;
-                        state_ = State::WritingTime;
-                        updateTimekeep();
-                        return WaitCondition::comm(get<interfaces::SPIInterface>());
-                    }
-                }
-                shutdown_allowed_ = disable_request_ && !set_alarm_request_ && !date_reset_request_;
-                state_ = State::ReadingTime;
-                requestCurrentTimeTransmission();
-                return WaitCondition::comm(get<interfaces::SPIInterface>());
+    DriverTask run() override {
+        while (true) {
+            if (status_ != Status::Ready) {
+                co_yield WaitCondition::demand();
+                continue;
             }
-            case State::WritingAlarm:
-            case State::WritingTime:
-            case State::ReadingTime:
-                return WaitCondition::comm(get<interfaces::SPIInterface>());
+            if (get_spi_transmission_disabled_ && get_spi_transmission_disabled_()) {
+                co_yield WaitCondition::delayMs(kPollPeriodMs);
+                continue;
+            }
+            if (!shutdown_allowed_) {
+                if (set_alarm_request_) {
+                    set_alarm_request_ = false;
+                    buildAlarm();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    if (!last_transfer_ok_) { status_ = Status::Error; continue; }
+                    if (!clock_started_) clock_started_ = true;
+                    continue;
+                }
+                if (date_reset_request_) {
+                    date_reset_request_ = false;
+                    updateTimekeep();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    if (!last_transfer_ok_) { status_ = Status::Error; continue; }
+                    if (!clock_started_) clock_started_ = true;
+                    continue;
+                }
+            }
+            shutdown_allowed_ = disable_request_ && !set_alarm_request_ && !date_reset_request_;
+            requestCurrentTimeTransmission();
+            co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+            if (!last_transfer_ok_) { status_ = Status::Error; continue; }
+            if (!clock_started_) clock_started_ = true;
+            decodeTimekeep();
         }
-        return WaitCondition::demand();
     }
 
     // MCP795W-specific interface (similar to DS3231)
@@ -220,14 +222,12 @@ private:
     std::tm current_time_;
     std::tm alarm_time_;
 
-    enum class State { Idle, WritingAlarm, WritingTime, ReadingTime };
-
     bool  clock_started_;
     bool  date_reset_request_;
     bool  set_alarm_request_;
     bool  disable_request_;
     bool  shutdown_allowed_;
-    State state_;
+    bool  last_transfer_ok_;
 
     std::function<uint8_t()> get_spi_transmission_disabled_;
 
@@ -264,14 +264,7 @@ private:
      * @param success True if transfer succeeded, false on error
      */
     void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
-        if (!success) {
-            status_ = Status::Error;
-            state_ = State::Idle;
-            return;
-        }
-        if (!clock_started_) clock_started_ = true;
-        if (state_ == State::ReadingTime) decodeTimekeep();
-        state_ = State::Idle;
+        last_transfer_ok_ = success;
     }
 
     /**

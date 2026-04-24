@@ -151,12 +151,8 @@ public:
             }
         }
 
-        entries_.push_back({
-            &peripheral,
-            WaitCondition::immediate(),
-            peripheral.getDefaultPriority(),
-            false
-        });
+        entries_.emplace_back(&peripheral, WaitCondition::immediate(),
+                              peripheral.run(), peripheral.getDefaultPriority());
     }
 
     /**
@@ -261,16 +257,20 @@ public:
             if (!best) break;
 
             best->ran_this_cycle = true;
-            WaitCondition cond = best->peripheral->run();
+            best->task.resume();
 
-            // defer_ms_ / defer_us_ may have set a Deadline during run().
-            // The explicit return value takes precedence unless it's Immediate,
-            // in which case the defer deadline is respected.
-            if (cond.type() == WaitCondition::Type::Immediate &&
-                best->wait.type() == WaitCondition::Type::Deadline) {
-                // defer was called — keep the deadline it set
+            if (best->task.done()) {
+                best->wait = WaitCondition::demand();
             } else {
-                best->wait = resolveWaitCondition(cond);
+                WaitCondition cond = best->task.currentWait();
+                // defer_ms_ / defer_us_ may have set a Deadline during resume().
+                // Keep it if the coroutine yielded Immediate (legacy shim path).
+                if (cond.type() == WaitCondition::Type::Immediate &&
+                    best->wait.type() == WaitCondition::Type::Deadline) {
+                    // defer was called — keep the deadline it set
+                } else {
+                    best->wait = resolveWaitCondition(cond);
+                }
             }
         }
 
@@ -281,8 +281,12 @@ private:
     struct ScheduleEntry {
         ChipBase*     peripheral;
         WaitCondition wait;
+        DriverTask    task;
         uint8_t       priority;
         bool          ran_this_cycle;
+
+        ScheduleEntry(ChipBase* p, WaitCondition w, DriverTask t, uint8_t pr)
+            : peripheral(p), wait(w), task(std::move(t)), priority(pr), ran_this_cycle(false) {}
     };
 
     struct CommEntry {
