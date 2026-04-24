@@ -77,7 +77,7 @@ extern chipz::interfaces::SPIInterface g_spi2;
 SysTickTimer g_systick_timer;
 chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_systick_timer};
 
-chipz::devices::DS3231  g_ds3231 {g_i2c1, []() -> uint32_t { return HAL_GetTick(); }};
+chipz::devices::DS3231  g_ds3231 {g_i2c1};
 chipz::devices::MAX6675 g_max6675{g_spi2};
 
 // ---------------------------------------------------------------------------

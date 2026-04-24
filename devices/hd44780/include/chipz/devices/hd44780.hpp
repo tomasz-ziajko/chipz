@@ -30,7 +30,12 @@ namespace devices {
  *   bit  4      RS    (0 = command register, 1 = character data)
  *   bit  5      E     (enable; HD44780 latches data on falling edge)
  *
- * Power-on delay is requested through Core's defer_ms callback if available.
+ * Scheduling:
+ *   Uninit      — first run() returns delayMs(DELAY_INIT_MS) for power-on settle.
+ *   Initializing — each run() advances one nibble/byte phase, suspends on comm.
+ *   Idle        — suspends on WaitCondition::demand(); call Core::wake(*this)
+ *                 after writeBuffer() / writeBufferAtPosition() to resume.
+ *   Transfer    — each run() advances one nibble/byte phase, suspends on comm.
  *
  * @tparam CommInterface Communication interface type (must support timed transmit)
  */
@@ -62,8 +67,6 @@ public:
         , status_(ChipBase::Status::Uninitialized)
         , state_(State::Uninit)
         , transfer_state_(TransferState::Idle)
-        , uninit_delay_requested_(false)
-        , transfer_complete_(true)
         , init_step_(0)
         , current_byte_(0)
         , single_nibble_value_(0)
@@ -93,8 +96,6 @@ public:
         }
         state_                    = State::Uninit;
         transfer_state_           = TransferState::Idle;
-        uninit_delay_requested_   = false;
-        transfer_complete_        = true;
         init_step_                = 0;
         current_byte_             = 0;
         current_rs_               = false;
@@ -127,32 +128,30 @@ public:
 
     std::string getDeviceId() const override { return "HD44780 LCD"; }
 
-    bool main() override {
-        if (status_ != ChipBase::Status::Ready) return false;
-        if (!transfer_complete_) return true;  // async op in flight
+    bool main() override { return true; }
+
+    WaitCondition run() override {
+        if (status_ != ChipBase::Status::Ready) return WaitCondition::demand();
 
         switch (state_) {
             case State::Uninit:
-                if (!uninit_delay_requested_) {
-                    uninit_delay_requested_ = true;
-                    if (this->defer_ms_) this->defer_ms_(DELAY_INIT_MS);
-                } else {
-                    state_          = State::Initializing;
-                    init_step_      = 0;
-                    transfer_state_ = TransferState::Idle;
-                    handleInitializingState();
-                }
-                break;
+                state_ = State::Initializing;
+                return WaitCondition::delayMs(DELAY_INIT_MS);
+
             case State::Initializing:
                 handleInitializingState();
-                break;
+                if (state_ == State::Idle) return WaitCondition::demand();
+                return WaitCondition::comm(this->get<CommInterface>());
+
             case State::Transfer:
                 handleTransferState();
-                break;
+                if (state_ == State::Idle) return WaitCondition::demand();
+                return WaitCondition::comm(this->get<CommInterface>());
+
             case State::Idle:
-                break;
+                return WaitCondition::demand();
         }
-        return true;
+        return WaitCondition::demand();
     }
 
     /**
@@ -269,9 +268,6 @@ private:
     uint8_t          rows_{};
     uint8_t          columns_{};
 
-    bool             uninit_delay_requested_;
-    bool             transfer_complete_;
-
     uint8_t          init_step_;
     uint8_t          current_byte_;
     uint8_t          single_nibble_value_;
@@ -297,7 +293,6 @@ private:
             state_  = State::Idle;
             return;
         }
-        transfer_complete_ = true;
     }
 
     // -------------------------------------------------------------------------

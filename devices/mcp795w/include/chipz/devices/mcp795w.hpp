@@ -21,11 +21,14 @@ namespace devices {
  * The MCP795W is a low-power real-time clock/calendar with battery backup
  * and 64 bytes of SRAM. Communicates via SPI interface.
  *
- * This implementation mirrors the design from the C version,
- * maintaining the exact sequence logic required for correct operation.
- * Uses std::tm for compatibility with DS3231 interface.
+ * Scheduling:
+ *   Idle      — dispatches next operation (alarm write, time write, or time read) then suspends on
+ *               WaitCondition::comm; if SPI is disabled or shutdown allowed with no pending ops,
+ *               suspends on WaitCondition::delayMs(kPollPeriodMs).
+ *   WritingAlarm / WritingTime / ReadingTime — suspends on WaitCondition::comm until SPI ISR fires.
+ *   onTransferComplete() advances state back to Idle; Core re-schedules run() immediately.
  *
- * @tparam CommInterface Communication interface type (typically SPI)
+ * Uses std::tm for compatibility with DS3231 interface.
  */
 class MCP795W : public Chip<interfaces::SPIInterface> {
 public:
@@ -40,15 +43,12 @@ public:
         , status_(Status::Uninitialized)
         , current_time_{}
         , alarm_time_{}
-        , timer_(0)
         , clock_started_(false)
         , date_reset_request_(false)
-        , date_reset_requested_(false)
         , set_alarm_request_(false)
-        , set_alarm_requested_(false)
-        , time_keep_requested_(false)
         , disable_request_(false)
         , shutdown_allowed_(false)
+        , state_(State::Idle)
         , get_spi_transmission_disabled_(get_spi_transmission_disabled)
     {
     }
@@ -64,12 +64,9 @@ public:
         shutdown_allowed_ = false;
         disable_request_ = false;
         clock_started_ = false;
-        timer_ = 0;
         date_reset_request_ = false;
         set_alarm_request_ = false;
-        date_reset_requested_ = false;
-        set_alarm_requested_ = false;
-        time_keep_requested_ = false;
+        state_ = State::Idle;
 
         // Initialize default time (10:10)
         current_time_ = {};
@@ -97,57 +94,41 @@ public:
         return "MCP795W RTC";
     }
 
-    bool main() override {
-        if (status_ != Status::Ready) {
-            return false;
-        }
+    bool main() override { return true; }
 
-        timer_ += 10;
+    WaitCondition run() override {
+        if (status_ != Status::Ready) return WaitCondition::demand();
 
-        if (timer_ < 100) {
-            return true;
-        }
-
-        if (get_spi_transmission_disabled_ && get_spi_transmission_disabled_()) {
-            return true;
-        }
-
-        timer_ -= 100;
-
-        if (!shutdown_allowed_) {
-            shutdown_allowed_ = false;
-
-            if (set_alarm_request_) {
-                set_alarm_requested_ = true;
-                set_alarm_request_ = false;
-                buildAlarm();
-                return true;
+        switch (state_) {
+            case State::Idle: {
+                if (get_spi_transmission_disabled_ && get_spi_transmission_disabled_()) {
+                    return WaitCondition::delayMs(kPollPeriodMs);
+                }
+                if (!shutdown_allowed_) {
+                    if (set_alarm_request_) {
+                        set_alarm_request_ = false;
+                        state_ = State::WritingAlarm;
+                        buildAlarm();
+                        return WaitCondition::comm(get<interfaces::SPIInterface>());
+                    }
+                    if (date_reset_request_) {
+                        date_reset_request_ = false;
+                        state_ = State::WritingTime;
+                        updateTimekeep();
+                        return WaitCondition::comm(get<interfaces::SPIInterface>());
+                    }
+                }
+                shutdown_allowed_ = disable_request_ && !set_alarm_request_ && !date_reset_request_;
+                state_ = State::ReadingTime;
+                requestCurrentTimeTransmission();
+                return WaitCondition::comm(get<interfaces::SPIInterface>());
             }
-
-            if (date_reset_request_) {
-                date_reset_requested_ = true;
-                date_reset_request_ = false;
-                updateTimekeep();
-                return true;
-            }
+            case State::WritingAlarm:
+            case State::WritingTime:
+            case State::ReadingTime:
+                return WaitCondition::comm(get<interfaces::SPIInterface>());
         }
-
-        if (disable_request_ &&
-            !set_alarm_request_ &&
-            !date_reset_request_ &&
-            !date_reset_requested_ &&
-            !set_alarm_requested_)
-        {
-            shutdown_allowed_ = true;
-        }
-        else {
-            shutdown_allowed_ = false;
-        }
-
-        time_keep_requested_ = true;
-        requestCurrentTimeTransmission();
-
-        return true;
+        return WaitCondition::demand();
     }
 
     // MCP795W-specific interface (similar to DS3231)
@@ -239,17 +220,18 @@ private:
     std::tm current_time_;
     std::tm alarm_time_;
 
-    uint16_t timer_;
-    bool clock_started_;
-    bool date_reset_request_;
-    bool date_reset_requested_;
-    bool set_alarm_request_;
-    bool set_alarm_requested_;
-    bool time_keep_requested_;
-    bool disable_request_;
-    bool shutdown_allowed_;
+    enum class State { Idle, WritingAlarm, WritingTime, ReadingTime };
+
+    bool  clock_started_;
+    bool  date_reset_request_;
+    bool  set_alarm_request_;
+    bool  disable_request_;
+    bool  shutdown_allowed_;
+    State state_;
 
     std::function<uint8_t()> get_spi_transmission_disabled_;
+
+    static constexpr uint32_t kPollPeriodMs = 100;
 
     // MCP795W SPI Opcodes
     static constexpr uint8_t OPCODE_EEREAD = 0x03;
@@ -284,25 +266,12 @@ private:
     void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
         if (!success) {
             status_ = Status::Error;
+            state_ = State::Idle;
             return;
         }
-
-        if (!clock_started_) {
-            clock_started_ = true;
-        }
-
-        if (date_reset_requested_) {
-            date_reset_requested_ = false;
-            return;
-        }
-        else if (set_alarm_requested_) {
-            set_alarm_requested_ = false;
-            return;
-        }
-        else if (time_keep_requested_) {
-            time_keep_requested_ = false;
-            decodeTimekeep();
-        }
+        if (!clock_started_) clock_started_ = true;
+        if (state_ == State::ReadingTime) decodeTimekeep();
+        state_ = State::Idle;
     }
 
     /**
