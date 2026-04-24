@@ -30,7 +30,12 @@ namespace devices {
  *   bit  4      RS    (0 = command register, 1 = character data)
  *   bit  5      E     (enable; HD44780 latches data on falling edge)
  *
- * Power-on delay is requested through Core's defer_ms callback if available.
+ * Scheduling:
+ *   Uninit      — first run() returns delayMs(DELAY_INIT_MS) for power-on settle.
+ *   Initializing — each run() advances one nibble/byte phase, suspends on comm.
+ *   Idle        — suspends on WaitCondition::demand(); call Core::wake(*this)
+ *                 after writeBuffer() / writeBufferAtPosition() to resume.
+ *   Transfer    — each run() advances one nibble/byte phase, suspends on comm.
  *
  * @tparam CommInterface Communication interface type (must support timed transmit)
  */
@@ -60,14 +65,13 @@ public:
         : Chip<CommInterface>(comm)
         , config_(config)
         , status_(ChipBase::Status::Uninitialized)
-        , state_(State::Uninit)
         , transfer_state_(TransferState::Idle)
-        , uninit_delay_requested_(false)
-        , transfer_complete_(true)
         , init_step_(0)
         , current_byte_(0)
         , single_nibble_value_(0)
         , current_rs_(false)
+        , past_init_(false)
+        , last_transfer_ok_(false)
         , buffer_write_in_progress_(false)
         , buffer_write_index_(0)
         , buffer_write_total_(0)
@@ -91,11 +95,10 @@ public:
             status_ = ChipBase::Status::Error;
             return false;
         }
-        state_                    = State::Uninit;
         transfer_state_           = TransferState::Idle;
-        uninit_delay_requested_   = false;
-        transfer_complete_        = true;
         init_step_                = 0;
+        past_init_                = false;
+        last_transfer_ok_         = false;
         current_byte_             = 0;
         current_rs_               = false;
         single_nibble_value_      = 0;
@@ -120,39 +123,42 @@ public:
     bool isReady() const override {
         return status_ == ChipBase::Status::Ready
             && this->get<CommInterface>().isReady()
-            && state_ == State::Idle;
+            && past_init_
+            && !buffer_write_in_progress_;
     }
 
     ChipBase::Status getStatus() const override { return status_; }
 
     std::string getDeviceId() const override { return "HD44780 LCD"; }
 
-    bool main() override {
-        if (status_ != ChipBase::Status::Ready) return false;
-        if (!transfer_complete_) return true;  // async op in flight
+    bool main() override { return true; }
 
-        switch (state_) {
-            case State::Uninit:
-                if (!uninit_delay_requested_) {
-                    uninit_delay_requested_ = true;
-                    if (this->defer_ms_) this->defer_ms_(DELAY_INIT_MS);
-                } else {
-                    state_          = State::Initializing;
-                    init_step_      = 0;
-                    transfer_state_ = TransferState::Idle;
-                    handleInitializingState();
-                }
-                break;
-            case State::Initializing:
-                handleInitializingState();
-                break;
-            case State::Transfer:
-                handleTransferState();
-                break;
-            case State::Idle:
-                break;
+    DriverTask run() override {
+        co_yield WaitCondition::delayMs(DELAY_INIT_MS);
+
+        if (status_ != ChipBase::Status::Ready) {
+            while (true) co_yield WaitCondition::demand();
         }
-        return true;
+
+        // Initialization sequence
+        handleInitializingState();  // starts first nibble
+        while (!past_init_) {
+            co_yield WaitCondition::comm(this->get<CommInterface>());
+            if (!last_transfer_ok_) { while (true) co_yield WaitCondition::demand(); }
+            handleInitializingState();
+        }
+
+        // Main loop: demand until writeBuffer/writeBufferAtPosition, then drive transfer
+        while (true) {
+            co_yield WaitCondition::demand();
+            if (status_ != ChipBase::Status::Ready) continue;
+            handleTransferState();  // kicks off first nibble of first byte
+            while (buffer_write_in_progress_ || transfer_state_ != TransferState::Idle) {
+                co_yield WaitCondition::comm(this->get<CommInterface>());
+                if (!last_transfer_ok_) break;
+                handleTransferState();
+            }
+        }
     }
 
     /**
@@ -163,13 +169,12 @@ public:
      * @return true if write started, false if busy
      */
     bool writeBuffer(const char* buffer) {
-        if (state_ != State::Idle || buffer_write_in_progress_) return false;
+        if (!past_init_ || buffer_write_in_progress_) return false;
         buffer_ptr_               = buffer;
         buffer_write_index_       = 0;
         buffer_write_total_       = static_cast<uint16_t>(rows_) * (columns_ + 1u);
         buffer_write_in_progress_ = true;
         buffer_write_partial_     = false;
-        state_                    = State::Transfer;
         transfer_state_           = TransferState::Idle;
         return true;
     }
@@ -183,7 +188,7 @@ public:
      * @return true if write started, false if busy or parameters out of range
      */
     bool writeBufferAtPosition(const char* buffer, uint16_t position, uint16_t length) {
-        if (state_ != State::Idle || buffer_write_in_progress_) return false;
+        if (!past_init_ || buffer_write_in_progress_) return false;
         uint16_t total = static_cast<uint16_t>(rows_) * columns_;
         if (position >= total || length == 0 || position + length > total) return false;
         buffer_ptr_               = buffer;
@@ -193,7 +198,6 @@ public:
         buffer_write_need_cursor_ = true;
         buffer_write_in_progress_ = true;
         buffer_write_partial_     = true;
-        state_                    = State::Transfer;
         transfer_state_           = TransferState::Idle;
         return true;
     }
@@ -202,8 +206,6 @@ private:
     // -------------------------------------------------------------------------
     // State machine
     // -------------------------------------------------------------------------
-
-    enum class State { Uninit, Initializing, Idle, Transfer };
 
     enum class TransferState {
         Idle,
@@ -264,18 +266,16 @@ private:
 
     Config           config_;
     ChipBase::Status status_;
-    State            state_;
     TransferState    transfer_state_;
     uint8_t          rows_{};
     uint8_t          columns_{};
-
-    bool             uninit_delay_requested_;
-    bool             transfer_complete_;
 
     uint8_t          init_step_;
     uint8_t          current_byte_;
     uint8_t          single_nibble_value_;
     bool             current_rs_;
+    bool             past_init_;
+    bool             last_transfer_ok_;
 
     bool             buffer_write_in_progress_;
     uint16_t         buffer_write_index_;
@@ -292,12 +292,8 @@ private:
     // -------------------------------------------------------------------------
 
     void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
-        if (!success) {
-            status_ = ChipBase::Status::Error;
-            state_  = State::Idle;
-            return;
-        }
-        transfer_complete_ = true;
+        last_transfer_ok_ = success;
+        if (!success) status_ = ChipBase::Status::Error;
     }
 
     // -------------------------------------------------------------------------
@@ -315,9 +311,7 @@ private:
         return (nibble & 0x0Fu) | (rs ? 0x10u : 0u) | (e ? 0x20u : 0u);
     }
 
-    /// Transmit one bus byte asynchronously; sets transfer_complete_ = false
     void sendBusValue(uint8_t val, uint32_t duration_us) {
-        transfer_complete_ = false;
         this->template transmit<CommInterface>(&val, 1u, duration_us);
     }
 
@@ -444,7 +438,7 @@ private:
 
             // Initialization complete
             default:
-                state_ = State::Idle;
+                past_init_ = true;
                 break;
         }
     }
@@ -462,10 +456,7 @@ private:
     }
 
     void handleTransferIdle() {
-        if (!buffer_write_in_progress_) {
-            state_ = State::Idle;
-            return;
-        }
+        if (!buffer_write_in_progress_) return;
         if (buffer_write_partial_) handlePartialBufferWrite();
         else                       handleFullBufferWrite();
     }
@@ -473,7 +464,6 @@ private:
     void handlePartialBufferWrite() {
         if (buffer_write_chars_sent_ >= buffer_write_length_) {
             buffer_write_in_progress_ = false;
-            state_ = State::Idle;
             return;
         }
 
@@ -504,7 +494,6 @@ private:
     void handleFullBufferWrite() {
         if (buffer_write_index_ >= buffer_write_total_) {
             buffer_write_in_progress_ = false;
-            state_ = State::Idle;
             return;
         }
 

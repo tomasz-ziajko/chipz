@@ -8,6 +8,7 @@
 #include "chip.hpp"
 #include "communication_interface.hpp"
 #include "timer_interface.hpp"
+#include "wait_condition.hpp"
 #include <array>
 #include <atomic>
 #include <bit>
@@ -19,38 +20,28 @@ namespace chipz {
 /**
  * @brief Central lifecycle and scheduling manager for chipz peripherals
  *
- * Core owns an internal scheduler that drives peripheral execution via
- * one-shot hardware timer interrupts. Peripherals are explicitly registered
- * via add() and scheduled at the tick level — no periodic polling.
- *
  * Execution model:
- *   - Both the timer ISR and comm interface ISRs only set an atomic pending
- *     flag (minimal ISR). No driver code runs in interrupt context.
- *   - service() is called from the main loop (or an RTOS task). It runs in
- *     two passes:
- *       Pass 1 — comm interrupts: all pending comm interface interrupts are
- *                routed to the active peripheral on each bus and cleared.
- *                This always runs before any main() call.
- *       Pass 2 — scheduler: all due peripherals are run in priority order.
- *                Peripherals that become overdue during pass 2 are also
- *                serviced in the same cycle (each runs at most once).
- *   - After both passes the timer is reprogrammed for the next deadline.
+ *   - ISRs only set atomic flags — no driver code ever runs in interrupt context.
+ *   - service() is called from the main loop. It runs in three passes:
+ *       Pass 1a — non-comm IRQs: routed to onIRQ(); drivers waiting on that IRQ
+ *                 are marked Immediate.
+ *       Pass 1b — comm interrupts: routed to onInterrupt(); drivers waiting on
+ *                 that interface are marked Immediate.
+ *       Pass 2  — scheduler: all Immediate / overdue-Deadline drivers run in
+ *                 priority order. Each driver's run() return value sets its next
+ *                 wait condition — no spurious calls.
  *
- * IRQ dispatch:
- *   - Core is parameterised on the platform IRQn enum type and its numeric
- *     range [kIRQnFirst, kIRQnLast]. These come from the port's irq.hpp.
- *   - Non-comm IRQs (EXTI, timers, DMA, CAN, …) are routed via onIRQ(),
- *     stored in isr_table_, and delivered to chips in service() pass 1.
- *   - Comm IRQs (I2C, SPI, …) reach Core through notify*() calls made by
- *     the port's HAL weak-callback overrides in chipz_isrs.cpp. The static
- *     pending flag (registered via CommunicationInterface::registerCorePending)
- *     ensures service() runs after every comm completion without needing a
- *     per-interface std::function callback.
+ * Scheduling:
+ *   run() returns a WaitCondition. Core suspends the driver until the condition
+ *   is satisfied. One hardware timer drives all deadline-based waits.
  *
- * Template parameters:
- *   @tparam IRQnType   Platform IRQn enum (e.g. chipz::port::stm32h5xx::IRQn)
- *   @tparam kIRQnFirst Lowest IRQn value in the enum (typically -15 for ARM)
- *   @tparam kIRQnLast  Highest IRQn value in the enum
+ *   Legacy drivers that override main() instead of run() continue to work
+ *   unchanged — the default run() delegates to main() and returns Immediate.
+ *   defer_ms_ / defer_us_ callbacks remain available as a shim during migration.
+ *
+ * @tparam IRQnType   Platform IRQn enum (e.g. chipz::port::stm32h5xx::IRQn)
+ * @tparam kIRQnFirst Lowest IRQn value (typically -15 for ARM Cortex-M)
+ * @tparam kIRQnLast  Highest IRQn value
  */
 template<typename IRQnType, int16_t kIRQnFirst, int16_t kIRQnLast>
 class Core {
@@ -58,14 +49,6 @@ public:
     static constexpr size_t kRange     = static_cast<size_t>(kIRQnLast - kIRQnFirst + 1);
     static constexpr size_t kMaskWords = (kRange + 31u) / 32u;
 
-    /**
-     * @brief Construct Core with a platform timer
-     *
-     * Registers the pending_ flag with CommunicationInterface so that all
-     * notify*() calls wake service() without any per-interface callback.
-     *
-     * @param timer Platform-specific one-shot timer implementation
-     */
     explicit Core(TimerInterface& timer)
         : timer_(timer)
         , pending_(false)
@@ -79,15 +62,8 @@ public:
     }
 
     /**
-     * @brief Route a hardware interrupt to the registered chip
-     *
-     * Call from the platform IRQ handler (defined in the port's chipz_isrs.cpp)
-     * for any non-communication interrupt source (EXTI, timers, DMA, CAN, …).
-     *
+     * @brief Route a non-comm hardware IRQ from the port ISR.
      * Safe to call from interrupt context — only sets atomic flags.
-     * Delivery to the chip happens in service() pass 1.
-     *
-     * @param irqn The IRQn that fired
      */
     void onIRQ(IRQnType irqn) {
         const size_t idx = toIdx(irqn);
@@ -101,28 +77,31 @@ public:
     }
 
     /**
-     * @brief Wake service() from an ISR without routing to any chip
-     *
-     * Use this when an ISR needs to trigger a service() cycle but does not
-     * correspond to a registered IRQ source (e.g. a timer used solely as a
-     * scheduler tick).
+     * @brief Wake service() from an ISR without routing to any chip.
      */
     void wakeFromISR() {
         pending_.store(true, std::memory_order_release);
     }
 
     /**
-     * @brief Register a peripheral with Core
-     *
-     * Injects all runtime callbacks (defer, claim-bus), registers the
-     * peripheral's communication interface for interrupt routing, and
-     * populates the IRQ dispatch table from requiredIRQs().
+     * @brief Wake a Demand-suspended driver from non-ISR context.
+     * Safe to call from the main loop or another driver's run().
+     */
+    void wake(ChipBase& peripheral) {
+        for (auto& entry : entries_) {
+            if (entry.peripheral == &peripheral) {
+                entry.wait = WaitCondition::immediate();
+                pending_.store(true, std::memory_order_release);
+                return;
+            }
+        }
+    }
+
+    /**
+     * @brief Register a peripheral and inject all runtime callbacks.
      * Must be called before initialize().
-     *
-     * @param peripheral Peripheral to register
      */
     void add(ChipBase& peripheral) {
-        // Inject defer callbacks
         peripheral.setDeferCallbacks(
             [this, &peripheral](uint32_t ms) {
                 uint64_t ticks = std::max(
@@ -140,7 +119,6 @@ public:
             }
         );
 
-        // Register all comm interfaces and inject per-interface claim-bus callbacks
         for (auto* comm : peripheral.getCommInterfaces()) {
             bool already_registered = false;
             for (auto& entry : comm_entries_) {
@@ -151,13 +129,9 @@ public:
             }
 
             if (!already_registered) {
-                // No setPendingCallback needed: CommunicationInterface::notify*()
-                // wakes Core directly via the static pending flag registered in
-                // Core's constructor.
                 comm_entries_.push_back({comm, nullptr});
             }
 
-            // Inject claim-bus: records this peripheral as active on this bus
             peripheral.setClaimBusCallback(comm, [this, comm, &peripheral]() {
                 for (auto& entry : comm_entries_) {
                     if (entry.comm == comm) {
@@ -168,7 +142,6 @@ public:
             });
         }
 
-        // Populate IRQ dispatch table
         for (int16_t irqn_raw : peripheral.requiredIRQs()) {
             const auto idx = static_cast<size_t>(
                 static_cast<int>(irqn_raw) - static_cast<int>(kIRQnFirst)
@@ -178,17 +151,12 @@ public:
             }
         }
 
-        entries_.push_back({
-            &peripheral,
-            timer_.getCurrentTick(),
-            peripheral.getDefaultPriority(),
-            false
-        });
+        entries_.emplace_back(&peripheral, WaitCondition::immediate(),
+                              peripheral.run(), peripheral.getDefaultPriority());
     }
 
     /**
-     * @brief Initialize all registered peripherals and arm the timer
-     * @return true if all peripherals initialized successfully
+     * @brief Initialize all registered peripherals and arm the timer.
      */
     bool initialize() {
         bool all_ok = true;
@@ -201,11 +169,6 @@ public:
         return all_ok;
     }
 
-    /**
-     * @brief Override the scheduling priority of a registered peripheral
-     * @param peripheral Target peripheral (must already be registered via add())
-     * @param priority   New priority (0 = highest, 255 = lowest)
-     */
     void setPriority(ChipBase& peripheral, uint8_t priority) {
         for (auto& entry : entries_) {
             if (entry.peripheral == &peripheral) {
@@ -216,66 +179,75 @@ public:
     }
 
     /**
-     * @brief Service due peripherals — call from main loop or RTOS task
+     * @brief Service due peripherals — call from main loop or RTOS task.
      *
-     * Returns immediately if no interrupt (timer or comm) has fired since
-     * the last call. Otherwise:
+     * Returns immediately if no interrupt or timer has fired since the last call.
      *
-     *   Pass 1a — routes all pending non-comm IRQs to registered chips.
-     *   Pass 1b — routes all pending comm interrupts to the active peripheral
-     *             on each bus (always before any main() call in the same cycle).
-     *   Pass 2  — runs all due peripherals in priority order, including any
-     *             that became overdue while earlier ones were executing.
-     *
-     * Reprograms the timer before returning.
+     * Pass 1a — routes pending non-comm IRQs; wakes IRQ-waiting drivers.
+     * Pass 1b — routes pending comm interrupts; wakes comm-waiting drivers.
+     * Pass 2  — runs all Immediate / overdue-Deadline drivers in priority order.
+     *           Each driver's run() return value sets its next WaitCondition.
      */
     void service() {
         if (!pending_.exchange(false, std::memory_order_acquire)) {
             return;
         }
 
-        // Pass 1a: route pending non-comm IRQ events
+        // Pass 1a: route non-comm IRQs, wake IRQ-waiting drivers
         for (size_t w = 0; w < kMaskWords; ++w) {
             uint32_t fired = isr_pending_[w].exchange(0, std::memory_order_acquire);
             while (fired) {
-                const int bit = std::countr_zero(fired);
+                const int    bit      = std::countr_zero(fired);
                 fired &= fired - 1;
-                const size_t idx = w * 32u + static_cast<size_t>(bit);
+                const size_t idx      = w * 32u + static_cast<size_t>(bit);
                 if (idx < kRange) {
+                    const int16_t irqn_val = static_cast<int16_t>(
+                        static_cast<int>(idx) + static_cast<int>(kIRQnFirst)
+                    );
+                    for (auto& entry : entries_) {
+                        if (entry.wait.type() == WaitCondition::Type::IRQ &&
+                            entry.wait.irqn() == irqn_val) {
+                            entry.wait = WaitCondition::immediate();
+                        }
+                    }
                     if (auto* p = isr_table_[idx]) {
-                        p->onIRQ(static_cast<int16_t>(
-                            static_cast<int>(idx) + static_cast<int>(kIRQnFirst)
-                        ));
+                        p->onIRQ(irqn_val);
                     }
                 }
             }
         }
 
-        // Pass 1b: route all pending comm interrupts
-        for (auto& comm_entry : comm_entries_) {
-            if (comm_entry.comm->hasInterruptPending()) {
-                if (comm_entry.active_peripheral) {
-                    comm_entry.active_peripheral->onInterrupt(
-                        *comm_entry.comm,
-                        comm_entry.comm->getPendingInterruptType(),
-                        comm_entry.comm->getInterruptSuccess()
+        // Pass 1b: route comm interrupts, wake comm-waiting drivers
+        for (auto& ce : comm_entries_) {
+            if (ce.comm->hasInterruptPending()) {
+                for (auto& entry : entries_) {
+                    if (entry.wait.type() == WaitCondition::Type::Comm &&
+                        entry.wait.commInterface() == ce.comm) {
+                        entry.wait = WaitCondition::immediate();
+                    }
+                }
+                if (ce.active_peripheral) {
+                    ce.active_peripheral->onInterrupt(
+                        *ce.comm,
+                        ce.comm->getPendingInterruptType(),
+                        ce.comm->getInterruptSuccess()
                     );
                 }
-                comm_entry.comm->clearInterrupt();
+                ce.comm->clearInterrupt();
             }
         }
 
-        // Pass 2: run due peripherals in priority order
+        // Pass 2: run due drivers in priority order
         for (auto& entry : entries_) {
             entry.ran_this_cycle = false;
         }
 
         while (true) {
-            uint64_t now = timer_.getCurrentTick();
+            const uint64_t now = timer_.getCurrentTick();
 
             ScheduleEntry* best = nullptr;
             for (auto& entry : entries_) {
-                if (!entry.ran_this_cycle && entry.next_deadline_ticks <= now) {
+                if (!entry.ran_this_cycle && isRunnable(entry, now)) {
                     if (!best || entry.priority < best->priority) {
                         best = &entry;
                     }
@@ -285,12 +257,20 @@ public:
             if (!best) break;
 
             best->ran_this_cycle = true;
-            best->peripheral->main();
+            best->task.resume();
 
-            // If main() didn't defer, advance deadline past current tick
-            uint64_t after = timer_.getCurrentTick();
-            if (best->next_deadline_ticks <= after) {
-                best->next_deadline_ticks = after + 1;
+            if (best->task.done()) {
+                best->wait = WaitCondition::demand();
+            } else {
+                WaitCondition cond = best->task.currentWait();
+                // defer_ms_ / defer_us_ may have set a Deadline during resume().
+                // Keep it if the coroutine yielded Immediate (legacy shim path).
+                if (cond.type() == WaitCondition::Type::Immediate &&
+                    best->wait.type() == WaitCondition::Type::Deadline) {
+                    // defer was called — keep the deadline it set
+                } else {
+                    best->wait = resolveWaitCondition(cond);
+                }
             }
         }
 
@@ -299,10 +279,14 @@ public:
 
 private:
     struct ScheduleEntry {
-        ChipBase* peripheral;
-        uint64_t  next_deadline_ticks;
-        uint8_t   priority;
-        bool      ran_this_cycle;
+        ChipBase*     peripheral;
+        WaitCondition wait;
+        DriverTask    task;
+        uint8_t       priority;
+        bool          ran_this_cycle;
+
+        ScheduleEntry(ChipBase* p, WaitCondition w, DriverTask t, uint8_t pr)
+            : peripheral(p), wait(w), task(std::move(t)), priority(pr), ran_this_cycle(false) {}
     };
 
     struct CommEntry {
@@ -316,20 +300,36 @@ private:
         );
     }
 
-    TimerInterface&                                    timer_;
-    std::atomic<bool>                                  pending_;
-    std::array<std::atomic<uint32_t>, kMaskWords>      isr_pending_{};
-    uint32_t                                           tick_frequency_hz_;
-    uint64_t                                           ticks_per_ms_;
-    std::vector<ScheduleEntry>                         entries_;
-    std::vector<CommEntry>                             comm_entries_;
-    std::array<ChipBase*, kRange>                      isr_table_{};
+    static bool isRunnable(const ScheduleEntry& e, uint64_t now) {
+        switch (e.wait.type()) {
+            case WaitCondition::Type::Immediate: return true;
+            case WaitCondition::Type::Deadline:  return e.wait.ticks() <= now;
+            default:                             return false;
+        }
+    }
+
+    WaitCondition resolveWaitCondition(const WaitCondition& cond) const {
+        const uint64_t now = timer_.getCurrentTick();
+        switch (cond.type()) {
+            case WaitCondition::Type::DelayMs:
+                return WaitCondition::deadline(
+                    now + static_cast<uint64_t>(cond.ms()) * ticks_per_ms_
+                );
+            case WaitCondition::Type::DelayUs:
+                return WaitCondition::deadline(
+                    now + static_cast<uint64_t>(cond.us()) *
+                          static_cast<uint64_t>(tick_frequency_hz_) / 1000000u
+                );
+            default:
+                return cond;
+        }
+    }
 
     void deferEntry(ChipBase& peripheral, uint64_t ticks) {
-        uint64_t deadline = timer_.getCurrentTick() + ticks;
+        const uint64_t deadline = timer_.getCurrentTick() + ticks;
         for (auto& entry : entries_) {
             if (entry.peripheral == &peripheral) {
-                entry.next_deadline_ticks = deadline;
+                entry.wait = WaitCondition::deadline(deadline);
                 return;
             }
         }
@@ -338,21 +338,39 @@ private:
     void scheduleNextInterrupt() {
         if (entries_.empty()) return;
 
-        uint64_t now     = timer_.getCurrentTick();
-        uint64_t nearest = UINT64_MAX;
+        const uint64_t now     = timer_.getCurrentTick();
+        uint64_t       nearest = UINT64_MAX;
+        bool           has_immediate = false;
 
         for (const auto& entry : entries_) {
-            if (entry.next_deadline_ticks < nearest) {
-                nearest = entry.next_deadline_ticks;
+            switch (entry.wait.type()) {
+                case WaitCondition::Type::Immediate:
+                    has_immediate = true;
+                    break;
+                case WaitCondition::Type::Deadline:
+                    if (entry.wait.ticks() < nearest)
+                        nearest = entry.wait.ticks();
+                    break;
+                default:
+                    break;
             }
         }
 
-        if (nearest <= now) {
+        if (has_immediate || nearest <= now) {
             pending_.store(true, std::memory_order_release);
-        } else {
+        } else if (nearest < UINT64_MAX) {
             timer_.schedule(nearest - now);
         }
     }
+
+    TimerInterface&                               timer_;
+    std::atomic<bool>                             pending_;
+    std::array<std::atomic<uint32_t>, kMaskWords> isr_pending_{};
+    uint32_t                                      tick_frequency_hz_;
+    uint64_t                                      ticks_per_ms_;
+    std::vector<ScheduleEntry>                    entries_;
+    std::vector<CommEntry>                        comm_entries_;
+    std::array<ChipBase*, kRange>                 isr_table_{};
 };
 
 } // namespace chipz

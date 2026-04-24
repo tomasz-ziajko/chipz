@@ -19,10 +19,16 @@ namespace devices {
  * The TJA1145 is a CAN transceiver with selective wake-up functionality
  * and partial networking support for low-power applications.
  *
- * This implementation mirrors the design from the C version,
- * maintaining the exact sequence logic required for correct operation.
+ * Scheduling:
+ *   !request_power_down_: resets config/event flags, drives Standby→NormalRequested→Normal.
+ *     Normal reached → WaitCondition::demand(). Wake via Core::wake() after requestPowerDown(true).
+ *   request_power_down_: drives Normal through config sequence then →SleepRequested→Sleep.
+ *     Sleep reached → WaitCondition::demand(). Wake via Core::wake() after requestPowerDown(false).
+ *   SPI disabled at any point → WaitCondition::delayMs(kPollPeriodMs).
+ *   spi_op_ tracks the in-flight read type for onTransferComplete() decoding (replaces _requested_ bools).
  *
- * @tparam CommInterface Communication interface type (typically SPI)
+ * Note: requestStateChangeToNormalMode() / requestStateChangeToSleepMode() issue SPI directly
+ * and bypass run() scheduling — caller is responsible for ensuring Core::service() drives follow-up.
  */
 class TJA1145 : public Chip<interfaces::SPIInterface> {
 public:
@@ -55,20 +61,17 @@ public:
         , config_(config)
         , request_power_down_(false)
         , power_down_permission_(false)
-        , state_check_requested_(false)
         , can_data_rate_set_(false)
         , can_extended_format_set_(false)
         , can_control_updated_(false)
         , event_enabled_(false)
         , system_event_checked_(false)
-        , system_event_check_requested_(false)
         , clear_system_event_request_(false)
         , transceiver_event_checked_(false)
-        , transceiver_event_check_requested_(false)
         , clear_transceiver_event_request_(false)
         , wake_up_pin_event_checked_(false)
-        , wakeup_pin_event_check_requested_(false)
         , clear_wake_up_pin_event_request_(false)
+        , spi_op_(SpiOp::None)
         , get_spi_transmission_disabled_(get_spi_transmission_disabled)
     {
     }
@@ -84,20 +87,17 @@ public:
         state_ = State::Standby;
         request_power_down_ = false;
         power_down_permission_ = false;
-        state_check_requested_ = false;
         can_data_rate_set_ = false;
         can_extended_format_set_ = false;
         can_control_updated_ = false;
         event_enabled_ = false;
         system_event_checked_ = false;
-        system_event_check_requested_ = false;
         clear_system_event_request_ = false;
         transceiver_event_checked_ = false;
-        transceiver_event_check_requested_ = false;
         clear_transceiver_event_request_ = false;
         wake_up_pin_event_checked_ = false;
-        wakeup_pin_event_check_requested_ = false;
         clear_wake_up_pin_event_request_ = false;
+        spi_op_ = SpiOp::None;
 
         status_ = Status::Ready;
         return true;
@@ -121,113 +121,133 @@ public:
         return "TJA1145 CAN Transceiver";
     }
 
-    bool main() override {
-        if (status_ != Status::Ready) {
-            return false;
-        }
+    bool main() override { return true; }
 
-        if (!request_power_down_) {
-            // Normal operation mode requested
-            can_data_rate_set_ = false;
-            can_control_updated_ = false;
-            can_extended_format_set_ = false;
-            event_enabled_ = false;
-
-            system_event_checked_ = false;
-            system_event_check_requested_ = false;
-            clear_system_event_request_ = false;
-            transceiver_event_checked_ = false;
-            transceiver_event_check_requested_ = false;
-            clear_transceiver_event_request_ = false;
-            wake_up_pin_event_checked_ = false;
-            wakeup_pin_event_check_requested_ = false;
-            clear_wake_up_pin_event_request_ = false;
-
-            power_down_permission_ = false;
-
-            if (get_spi_transmission_disabled_ && get_spi_transmission_disabled_()) {
-                return true;
+    DriverTask run() override {
+        while (true) {
+            if (status_ != Status::Ready) {
+                co_yield WaitCondition::demand();
+                continue;
             }
 
-            if (State::Normal == state_) {
-                return true;
-            }
+            if (!request_power_down_) {
+                can_data_rate_set_               = false;
+                can_control_updated_             = false;
+                can_extended_format_set_         = false;
+                event_enabled_                   = false;
+                system_event_checked_            = false;
+                clear_system_event_request_      = false;
+                transceiver_event_checked_       = false;
+                clear_transceiver_event_request_ = false;
+                wake_up_pin_event_checked_       = false;
+                clear_wake_up_pin_event_request_ = false;
+                power_down_permission_           = false;
 
-            if (State::NormalRequested == state_) {
-                checkState();
-                return true;
-            }
-
-            requestNormalMode();
-        }
-        else {
-            // Power down requested
-            if (!config_.enableWakeupOnCan) {
-                power_down_permission_ = true;
-            }
-
-            if (get_spi_transmission_disabled_ && get_spi_transmission_disabled_()) {
-                return true;
-            }
-
-            if (State::Sleep == state_) {
-                power_down_permission_ = true;
-                return true;
-            }
-
-            if (State::Standby == state_ || State::Off == state_) {
+                if (get_spi_transmission_disabled_ && get_spi_transmission_disabled_()) {
+                    co_yield WaitCondition::delayMs(kPollPeriodMs);
+                    continue;
+                }
+                if (state_ == State::Normal) {
+                    co_yield WaitCondition::demand();
+                    continue;
+                }
+                if (state_ == State::NormalRequested) {
+                    checkState();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
+                }
                 requestNormalMode();
+                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                continue;
+            }
+
+            // Power-down sequence
+            if (!config_.enableWakeupOnCan) power_down_permission_ = true;
+
+            if (get_spi_transmission_disabled_ && get_spi_transmission_disabled_()) {
+                co_yield WaitCondition::delayMs(kPollPeriodMs);
+                continue;
+            }
+            if (state_ == State::Sleep) {
+                power_down_permission_ = true;
+                co_yield WaitCondition::demand();
+                continue;
+            }
+            if (state_ == State::Standby || state_ == State::Off) {
                 transceiver_event_checked_ = false;
-                system_event_checked_ = false;
-                event_enabled_ = false;
+                system_event_checked_      = false;
+                event_enabled_             = false;
+                requestNormalMode();
+                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                continue;
             }
-            else if (State::NormalRequested == state_) {
+            if (state_ == State::NormalRequested) {
                 checkState();
+                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                continue;
             }
-            else if (State::Normal == state_) {
+            if (state_ == State::Normal) {
                 // Execute configuration sequence (MUST maintain this order!)
                 if (clear_system_event_request_) {
                     clear_system_event_request_ = false;
                     clearSystemEventFlag();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
                 }
-                else if (clear_transceiver_event_request_) {
+                if (clear_transceiver_event_request_) {
                     clear_transceiver_event_request_ = false;
                     clearTransceiverEventFlag();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
                 }
-                else if (!can_control_updated_) {
+                if (!can_control_updated_) {
                     can_control_updated_ = true;
                     setCanControl();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
                 }
-                else if (!can_data_rate_set_) {
+                if (!can_data_rate_set_) {
                     can_data_rate_set_ = true;
                     setDataRate();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
                 }
-                else if (!event_enabled_) {
+                if (!event_enabled_) {
                     event_enabled_ = true;
                     setEventEnable();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
                 }
-                else if (!can_extended_format_set_) {
+                if (!can_extended_format_set_) {
                     can_extended_format_set_ = true;
                     setCanExtendedDataFormat();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
                 }
-                else if (!system_event_checked_) {
+                if (!system_event_checked_) {
                     system_event_checked_ = true;
                     requestSystemEventCheck();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
                 }
-                else if (!transceiver_event_checked_) {
+                if (!transceiver_event_checked_) {
                     transceiver_event_checked_ = true;
                     requestTransceiverEventCheck();
+                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    continue;
                 }
-                else {
-                    requestSleepMode();
-                }
+                requestSleepMode();
+                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                continue;
             }
-            else if (State::SleepRequested == state_) {
+            if (state_ == State::SleepRequested) {
                 checkState();
+                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                continue;
             }
-        }
 
-        return true;
+            co_yield WaitCondition::demand();
+        }
     }
 
     // TJA1145-specific interface
@@ -282,31 +302,37 @@ private:
     State state_;
     Config config_;
 
+    enum class SpiOp {
+        None,
+        CheckingState,
+        CheckingSystemEvent,
+        CheckingTransceiverEvent,
+        CheckingWakeupPinEvent,
+    };
+
     // State and request flags
-    bool request_power_down_;
-    bool power_down_permission_;
-    bool state_check_requested_;
+    bool   request_power_down_;
+    bool   power_down_permission_;
 
-    // Configuration flags
-    bool can_data_rate_set_;
-    bool can_extended_format_set_;
-    bool can_control_updated_;
-    bool event_enabled_;
+    // Configuration done-flags (reset on each !request_power_down_ run() entry)
+    bool   can_data_rate_set_;
+    bool   can_extended_format_set_;
+    bool   can_control_updated_;
+    bool   event_enabled_;
 
-    // Event checking flags
-    bool system_event_checked_;
-    bool system_event_check_requested_;
-    bool clear_system_event_request_;
+    // Event checking done-flags and clear requests
+    bool   system_event_checked_;
+    bool   clear_system_event_request_;
+    bool   transceiver_event_checked_;
+    bool   clear_transceiver_event_request_;
+    bool   wake_up_pin_event_checked_;
+    bool   clear_wake_up_pin_event_request_;
 
-    bool transceiver_event_checked_;
-    bool transceiver_event_check_requested_;
-    bool clear_transceiver_event_request_;
-
-    bool wake_up_pin_event_checked_;
-    bool wakeup_pin_event_check_requested_;
-    bool clear_wake_up_pin_event_request_;
+    SpiOp  spi_op_;
 
     std::function<uint8_t()> get_spi_transmission_disabled_;
+
+    static constexpr uint32_t kPollPeriodMs = 10;
 
     // TJA1145 Register addresses
     static constexpr uint8_t READ_ONLY_BIT = 0x01;
@@ -332,42 +358,31 @@ private:
     void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
         if (!success) {
             status_ = Status::Error;
+            spi_op_ = SpiOp::None;
             return;
         }
 
         const uint8_t* rx_buffer = get<interfaces::SPIInterface>().getRxBuffer();
 
-        // Process callback based on what was requested
-        if (system_event_check_requested_) {
-            system_event_check_requested_ = false;
-            if (rx_buffer[1] != 0) {
-                clear_system_event_request_ = true;
-            }
+        switch (spi_op_) {
+            case SpiOp::CheckingState:
+                if ((rx_buffer[1] & 0x07) == MODE_NORMAL)  state_ = State::Normal;
+                else if ((rx_buffer[1] & 0x07) == MODE_SLEEP)   state_ = State::Sleep;
+                else if ((rx_buffer[1] & 0x07) == MODE_STANDBY) state_ = State::Standby;
+                break;
+            case SpiOp::CheckingSystemEvent:
+                if (rx_buffer[1] != 0) clear_system_event_request_ = true;
+                break;
+            case SpiOp::CheckingTransceiverEvent:
+                if (rx_buffer[1] != 0) clear_transceiver_event_request_ = true;
+                break;
+            case SpiOp::CheckingWakeupPinEvent:
+                if (rx_buffer[1] != 0) clear_wake_up_pin_event_request_ = true;
+                break;
+            case SpiOp::None:
+                break;
         }
-        else if (transceiver_event_check_requested_) {
-            transceiver_event_check_requested_ = false;
-            if (rx_buffer[1] != 0) {
-                clear_transceiver_event_request_ = true;
-            }
-        }
-        else if (wakeup_pin_event_check_requested_) {
-            wakeup_pin_event_check_requested_ = false;
-            if (rx_buffer[1] != 0) {
-                clear_wake_up_pin_event_request_ = true;
-            }
-        }
-        else if (state_check_requested_) {
-            if (MODE_NORMAL == (rx_buffer[1] & 0x07)) {
-                state_ = State::Normal;
-            }
-            else if (MODE_SLEEP == (rx_buffer[1] & 0x07)) {
-                state_ = State::Sleep;
-            }
-            else if (MODE_STANDBY == (rx_buffer[1] & 0x07)) {
-                state_ = State::Standby;
-            }
-            state_check_requested_ = false;
-        }
+        spi_op_ = SpiOp::None;
     }
 
     /**
@@ -396,7 +411,7 @@ private:
      * @brief Request state check from device
      */
     void checkState() {
-        state_check_requested_ = true;
+        spi_op_ = SpiOp::CheckingState;
         uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_MODE_CONTROL << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;
@@ -407,7 +422,7 @@ private:
      * @brief Request system event check
      */
     void requestSystemEventCheck() {
-        system_event_check_requested_ = true;
+        spi_op_ = SpiOp::CheckingSystemEvent;
         uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_SYSTEM_EVENT_STATUS << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;
@@ -418,7 +433,7 @@ private:
      * @brief Request transceiver event check
      */
     void requestTransceiverEventCheck() {
-        transceiver_event_check_requested_ = true;
+        spi_op_ = SpiOp::CheckingTransceiverEvent;
         uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
         tx_buffer[0] = (REGISTER_TRANSCEIVER_EVENT_STATUS << 1) | (READ_ONLY_BIT);
         tx_buffer[1] = 0;

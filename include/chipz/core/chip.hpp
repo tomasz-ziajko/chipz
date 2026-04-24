@@ -7,8 +7,11 @@
 
 #include "communication_interface.hpp"
 #include "concepts.hpp"
+#include "wait_condition.hpp"
 #include <array>
+#include <coroutine>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <span>
 #include <string>
@@ -48,6 +51,55 @@ template<typename... Ts>
 constexpr bool all_unique_v = all_unique<Ts...>::value;
 
 } // namespace detail
+
+/**
+ * @brief Coroutine return type for ChipBase::run().
+ *
+ * co_yield a WaitCondition to suspend; Core resumes the driver when the
+ * condition is satisfied.  Created once per driver at Core::add() time and
+ * stored in ScheduleEntry for its lifetime.
+ */
+class DriverTask {
+public:
+    struct promise_type {
+        WaitCondition wait_{WaitCondition::immediate()};
+
+        DriverTask          get_return_object() noexcept { return DriverTask{Handle::from_promise(*this)}; }
+        std::suspend_always initial_suspend()   noexcept { return {}; }
+        std::suspend_always final_suspend()     noexcept { return {}; }
+        void                return_void()       noexcept {}
+        void                unhandled_exception() noexcept { std::abort(); }
+
+        std::suspend_always yield_value(WaitCondition wc) noexcept {
+            wait_ = wc;
+            return {};
+        }
+    };
+
+    using Handle = std::coroutine_handle<promise_type>;
+
+    explicit DriverTask(Handle h) noexcept : handle_(h) {}
+    ~DriverTask() { if (handle_) handle_.destroy(); }
+
+    DriverTask(DriverTask&& o) noexcept : handle_(o.handle_) { o.handle_ = nullptr; }
+    DriverTask& operator=(DriverTask&& o) noexcept {
+        if (this != &o) {
+            if (handle_) handle_.destroy();
+            handle_   = o.handle_;
+            o.handle_ = nullptr;
+        }
+        return *this;
+    }
+    DriverTask(const DriverTask&)            = delete;
+    DriverTask& operator=(const DriverTask&) = delete;
+
+    void          resume()      noexcept { if (handle_ && !handle_.done()) handle_.resume(); }
+    bool          done()  const noexcept { return !handle_ || handle_.done(); }
+    WaitCondition currentWait() const noexcept { return handle_.promise().wait_; }
+
+private:
+    Handle handle_;
+};
 
 /**
  * @brief Non-template base class for all externally-connected chips
@@ -92,7 +144,30 @@ public:
     virtual bool isReady() const = 0;
     virtual Status getStatus() const = 0;
     virtual std::string getDeviceId() const = 0;
-    virtual bool main() = 0;
+
+    /**
+     * @brief Legacy per-cycle entry point — override in pre-migration drivers.
+     *
+     * New drivers should override run() instead. Core calls run(), whose default
+     * implementation delegates here and returns WaitCondition::immediate().
+     */
+    virtual bool main() { return true; }
+
+    /**
+     * @brief Scheduling entry point — override as a coroutine returning DriverTask.
+     *
+     * co_yield a WaitCondition to suspend until the condition is satisfied.
+     * Core stores the returned DriverTask and resumes it — run() is called
+     * only once per driver lifetime, not once per service cycle.
+     *
+     * Default: calls main() in a loop for backward compatibility.
+     */
+    virtual DriverTask run() {
+        while (true) {
+            main();
+            co_yield WaitCondition::immediate();
+        }
+    }
 
     /**
      * @brief Get default scheduling priority for this chip
