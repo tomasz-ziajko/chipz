@@ -7,6 +7,7 @@
 
 #include "communication_interface.hpp"
 #include "concepts.hpp"
+#include "wait_condition.hpp"
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -92,7 +93,27 @@ public:
     virtual bool isReady() const = 0;
     virtual Status getStatus() const = 0;
     virtual std::string getDeviceId() const = 0;
-    virtual bool main() = 0;
+
+    /**
+     * @brief Legacy per-cycle entry point — override in pre-migration drivers.
+     *
+     * New drivers should override run() instead. Core calls run(), whose default
+     * implementation delegates here and returns WaitCondition::immediate().
+     */
+    virtual bool main() { return true; }
+
+    /**
+     * @brief Scheduling entry point — override to replace main() with event-driven scheduling.
+     *
+     * Return a WaitCondition describing what this driver is waiting for. Core will not
+     * call run() again until that condition is satisfied — no spurious calls.
+     *
+     * Default delegates to main() for backward compatibility with pre-migration drivers.
+     */
+    virtual WaitCondition run() {
+        main();
+        return WaitCondition::immediate();
+    }
 
     /**
      * @brief Get default scheduling priority for this chip
