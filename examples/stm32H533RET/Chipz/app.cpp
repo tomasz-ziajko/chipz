@@ -23,8 +23,8 @@
 #include <chipz/core/timer_interface.hpp>
 #include <chipz/devices/max6675.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
-#include "irq.hpp"
 
+#include "irq.hpp"
 #include "stm32h5xx_hal.h"
 
 using chipz::port::stm32h5xx::IRQn;
@@ -36,29 +36,40 @@ using chipz::port::stm32h5xx::kIRQnLast;
 // ---------------------------------------------------------------------------
 
 class SysTickTimer final : public chipz::TimerInterface {
-public:
-    void schedule(uint64_t ticks_from_now) override {
+    public:
+    void schedule(uint64_t ticks_from_now) override
+    {
         deadline_ = static_cast<uint64_t>(HAL_GetTick()) + ticks_from_now;
         armed_    = true;
     }
 
-    void cancel() override { armed_ = false; }
+    void cancel() override
+    {
+        armed_ = false;
+    }
 
-    uint64_t getCurrentTick() const override {
+    uint64_t getCurrentTick() const override
+    {
         return static_cast<uint64_t>(HAL_GetTick());
     }
 
-    uint32_t getTickFrequencyHz() const override { return 1000u; }
+    uint32_t getTickFrequencyHz() const override
+    {
+        return 1000u;
+    }
 
     // Called from SysTick_Handler (via chipz_systick_tick()) after HAL_IncTick().
-    void onSysTick() {
+    void onSysTick()
+    {
         if (armed_ && static_cast<uint64_t>(HAL_GetTick()) >= deadline_) {
             armed_ = false;
-            if (on_elapsed_) on_elapsed_();
+            if (on_elapsed_) {
+                on_elapsed_();
+            }
         }
     }
 
-private:
+    private:
     uint64_t deadline_ = 0;
     bool     armed_    = false;
 };
@@ -68,34 +79,33 @@ private:
 // ---------------------------------------------------------------------------
 
 extern "C" {
-    __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
+__attribute__((weak)) extern SPI_HandleTypeDef hspi2;
 }
 
 // ---------------------------------------------------------------------------
 // chipz objects
 // ---------------------------------------------------------------------------
 
-using SPI2Type = chipz::interfaces::SPIInterface<chipz::devices::MAX6675<>::kMaxTransfer>;
+using SPI2Type = chipz::interfaces::SPIInterface<chipz::devices::MAX6675::kMaxTransfer>;
 
 SPI2Type g_spi2{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
-        return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len);
-    }
-};
+    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len); }};
 
 // Override the weak pointer in chipz_isrs.cpp — ISR callbacks route through this
 chipz::CommunicationInterface* g_spi2_iface = &g_spi2;
 
-SysTickTimer g_systick_timer;
+SysTickTimer                             g_systick_timer;
 chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_systick_timer};
 
-chipz::devices::MAX6675<> g_max6675{g_spi2};
+auto                    g_max6675_conn = g_spi2.registerConnection([](bool) {});
+chipz::devices::MAX6675 g_max6675{g_spi2, g_max6675_conn};
 
 // ---------------------------------------------------------------------------
 // SysTick bridge — called from SysTick_Handler in chipz_isrs.cpp
 // ---------------------------------------------------------------------------
 
-extern "C" void chipz_systick_tick() {
+extern "C" void chipz_systick_tick()
+{
     g_systick_timer.onSysTick();
 }
 
@@ -103,11 +113,13 @@ extern "C" void chipz_systick_tick() {
 // Public API — called from main.c via extern "C" declarations
 // ---------------------------------------------------------------------------
 
-extern "C" void chipz_app_init() {
+extern "C" void chipz_app_init()
+{
     g_core.add(g_max6675);
     g_core.initialize();
 }
 
-extern "C" void chipz_app_run() {
+extern "C" void chipz_app_run()
+{
     g_core.service();
 }

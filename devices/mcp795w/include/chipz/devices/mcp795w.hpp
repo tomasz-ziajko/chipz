@@ -6,7 +6,6 @@
 #define CHIPZ_DEVICES_MCP795W_HPP
 
 #include <chipz/core/chip.hpp>
-#include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <ctime>
 #include <functional>
@@ -30,16 +29,18 @@ namespace devices {
  *
  * Uses std::tm for compatibility with DS3231 interface.
  */
-template <size_t N = 11>
-class MCP795W : public Chip<interfaces::SPIInterface<N>> {
-    using SPI = interfaces::SPIInterface<N>;
-    using Status = ChipBase::Status;
+class MCP795W : public Chip<CommunicationInterface> {
+    using SPI          = CommunicationInterface;
+    using ConnectionId = CommunicationInterface::ConnectionId;
+    using Status       = ChipBase::Status;
 
     public:
     static constexpr size_t kMaxTransfer = 11;
 
-    MCP795W(SPI& comm, std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
+    MCP795W(SPI& comm, ConnectionId connection_id,
+            std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
         Chip<SPI>(comm),
+        connection_id_(connection_id),
         status_(Status::Uninitialized),
         current_time_{},
         alarm_time_{},
@@ -60,6 +61,8 @@ class MCP795W : public Chip<interfaces::SPIInterface<N>> {
             status_ = Status::Error;
             return false;
         }
+
+        this->template setConnection<SPI>(connection_id_);
 
         // Reset state
         shutdown_allowed_   = false;
@@ -246,7 +249,8 @@ class MCP795W : public Chip<interfaces::SPIInterface<N>> {
     }
 
     private:
-    Status status_;
+    ConnectionId connection_id_;
+    Status       status_;
 
     std::tm current_time_;
     std::tm alarm_time_;

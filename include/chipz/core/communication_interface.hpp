@@ -20,8 +20,8 @@ namespace chipz {
  * compile-time constant and no heap allocation is required.
  *
  * Core and ChipBase hold CommunicationInterface* for type-erased routing.
- * Drivers access getTxBuffer()/getRxBuffer() through their typed reference
- * to the concrete interface — no virtual call needed on the hot path.
+ * Drivers hold CommunicationInterface& and call getTxBuffer()/getRxBuffer()
+ * through virtual dispatch — one vtable dereference per transfer setup.
  */
 class CommunicationInterface {
     public:
@@ -45,6 +45,9 @@ class CommunicationInterface {
     {
         (void)id;
     }
+
+    virtual uint8_t* getTxBuffer() = 0;
+    virtual uint8_t* getRxBuffer() = 0;
 
     virtual bool transmit(const uint8_t* data, size_t length)          = 0;
     virtual bool transmit(const uint8_t* data, size_t length, uint32_t duration_us)

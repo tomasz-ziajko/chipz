@@ -6,7 +6,6 @@
 #define CHIPZ_DEVICES_MAX6675_HPP
 
 #include <chipz/core/chip.hpp>
-#include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <string>
 
@@ -23,16 +22,17 @@ namespace devices {
  * Scheduling (coroutine):
  *   Loop: receive (retry immediate if bus busy) → co_yield comm → deserialize → co_yield delayMs.
  */
-template <size_t N = 2>
-class MAX6675 : public Chip<interfaces::SPIInterface<N>> {
-    using SPI = interfaces::SPIInterface<N>;
-    using Status = ChipBase::Status;
+class MAX6675 : public Chip<CommunicationInterface> {
+    using SPI          = CommunicationInterface;
+    using ConnectionId = CommunicationInterface::ConnectionId;
+    using Status       = ChipBase::Status;
 
     public:
     static constexpr size_t kMaxTransfer = 2;
 
-    explicit MAX6675(SPI& comm) :
+    MAX6675(SPI& comm, ConnectionId connection_id) :
         Chip<SPI>(comm),
+        connection_id_(connection_id),
         status_(Status::Uninitialized),
         temperature_(0),
         connection_open_(false),
@@ -46,6 +46,7 @@ class MAX6675 : public Chip<interfaces::SPIInterface<N>> {
             status_ = Status::Error;
             return false;
         }
+        this->template setConnection<SPI>(connection_id_);
         temperature_      = 0;
         connection_open_  = false;
         last_transfer_ok_ = false;
@@ -116,8 +117,9 @@ class MAX6675 : public Chip<interfaces::SPIInterface<N>> {
     }
 
     private:
-    Status   status_;
-    uint32_t temperature_;
+    ConnectionId connection_id_;
+    Status       status_;
+    uint32_t     temperature_;
     bool     connection_open_;
     bool     last_transfer_ok_;
 

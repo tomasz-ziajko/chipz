@@ -56,11 +56,11 @@ class I2CInterface : public CommunicationInterface {
         device_address_ = connections_[id];
     }
 
-    uint8_t* getTxBuffer()
+    uint8_t* getTxBuffer() override
     {
         return tx_buffer_.data();
     }
-    uint8_t* getRxBuffer()
+    uint8_t* getRxBuffer() override
     {
         return rx_buffer_.data();
     }

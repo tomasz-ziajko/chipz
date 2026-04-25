@@ -7,7 +7,6 @@
 
 #include <array>
 #include <chipz/core/chip.hpp>
-#include <chipz/interfaces/i2c_interface.hpp>
 #include <cstdint>
 #include <ctime>
 #include <string>
@@ -25,10 +24,10 @@ namespace devices {
  *                 time every kTimeReadPeriodMs, status every
  *                 kStatusReadInterval time-read cycles (~1 s).
  */
-template <size_t N = 7>
-class DS3231 : public Chip<interfaces::I2CInterface<N>> {
-    using I2C = interfaces::I2CInterface<N>;
-    using Status = ChipBase::Status;
+class DS3231 : public Chip<CommunicationInterface> {
+    using I2C          = CommunicationInterface;
+    using ConnectionId = CommunicationInterface::ConnectionId;
+    using Status       = ChipBase::Status;
 
     public:
     static constexpr size_t kMaxTransfer = 7;
@@ -51,8 +50,11 @@ class DS3231 : public Chip<interfaces::I2CInterface<N>> {
         Down
     };
 
-    explicit DS3231(I2C& comm) :
+    static constexpr uint8_t I2C_ADDRESS = 0x68;
+
+    DS3231(I2C& comm, ConnectionId connection_id) :
         Chip<I2C>(comm),
+        connection_id_(connection_id),
         status_(Status::Uninitialized),
         current_time_{},
         time_update_request_(false),
@@ -85,7 +87,7 @@ class DS3231 : public Chip<interfaces::I2CInterface<N>> {
             return false;
         }
 
-        this->template setConnection<I2C>(this->template get<I2C>().registerConnection(I2C_ADDRESS));
+        this->template setConnection<I2C>(connection_id_);
 
         time_update_request_   = false;
         alarm1_update_request_ = false;
@@ -412,8 +414,9 @@ class DS3231 : public Chip<interfaces::I2CInterface<N>> {
     }
 
     private:
-    Status  status_;
-    std::tm current_time_;
+    ConnectionId connection_id_;
+    Status       status_;
+    std::tm      current_time_;
 
     bool    time_update_request_;
     bool    alarm1_update_request_;
@@ -430,7 +433,6 @@ class DS3231 : public Chip<interfaces::I2CInterface<N>> {
     bool    last_transfer_ok_;
     bool    clock_ready_;
 
-    static constexpr uint8_t  I2C_ADDRESS            = 0x68;
     static constexpr uint8_t  TIME_REGISTER_LENGTH   = 7;
     static constexpr uint8_t  ALARM1_LENGTH          = 4;
     static constexpr uint8_t  ALARM2_LENGTH          = 3;

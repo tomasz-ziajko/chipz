@@ -6,7 +6,6 @@
 #define CHIPZ_DEVICES_TJA1145_HPP
 
 #include <chipz/core/chip.hpp>
-#include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <functional>
 
@@ -30,10 +29,10 @@ namespace devices {
  * Note: requestStateChangeToNormalMode() / requestStateChangeToSleepMode() issue SPI directly
  * and bypass run() scheduling — caller is responsible for ensuring Core::service() drives follow-up.
  */
-template <size_t N = 2>
-class TJA1145 : public Chip<interfaces::SPIInterface<N>> {
-    using SPI = interfaces::SPIInterface<N>;
-    using Status = ChipBase::Status;
+class TJA1145 : public Chip<CommunicationInterface> {
+    using SPI          = CommunicationInterface;
+    using ConnectionId = CommunicationInterface::ConnectionId;
+    using Status       = ChipBase::Status;
 
     public:
     static constexpr size_t kMaxTransfer = 2;
@@ -58,9 +57,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface<N>> {
      * @param config Configuration parameters
      * @param get_spi_transmission_disabled Function to check if SPI transmission is disabled
      */
-    TJA1145(SPI& comm, const Config& config,
+    TJA1145(SPI& comm, ConnectionId connection_id, const Config& config,
             std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
         Chip<SPI>(comm),
+        connection_id_(connection_id),
         status_(Status::Uninitialized),
         state_(State::Standby),
         config_(config),
@@ -88,6 +88,8 @@ class TJA1145 : public Chip<interfaces::SPIInterface<N>> {
             status_ = Status::Error;
             return false;
         }
+
+        this->template setConnection<SPI>(connection_id_);
 
         // Reset state
         state_                           = State::Standby;
@@ -320,7 +322,8 @@ class TJA1145 : public Chip<interfaces::SPIInterface<N>> {
     }
 
     private:
-    Status status_;
+    ConnectionId connection_id_;
+    Status       status_;
     State  state_;
     Config config_;
 
