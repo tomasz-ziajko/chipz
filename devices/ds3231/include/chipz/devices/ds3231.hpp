@@ -7,7 +7,6 @@
 
 #include <array>
 #include <chipz/core/chip.hpp>
-#include <chipz/interfaces/i2c_interface.hpp>
 #include <cstdint>
 #include <ctime>
 #include <string>
@@ -25,8 +24,14 @@ namespace devices {
  *                 time every kTimeReadPeriodMs, status every
  *                 kStatusReadInterval time-read cycles (~1 s).
  */
-class DS3231 : public Chip<interfaces::I2CInterface> {
+class DS3231 : public Chip<CommunicationInterface> {
+    using I2C          = CommunicationInterface;
+    using ConnectionId = CommunicationInterface::ConnectionId;
+    using Status       = ChipBase::Status;
+
     public:
+    static constexpr size_t kMaxTransfer = 7;
+
     struct Temperature {
         int8_t  integer;
         uint8_t fraction;  // 0.25°C resolution (0, 25, 50, 75)
@@ -45,8 +50,11 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
         Down
     };
 
-    explicit DS3231(interfaces::I2CInterface& comm) :
-        Chip<interfaces::I2CInterface>(comm),
+    static constexpr uint8_t I2C_ADDRESS = 0x68;
+
+    DS3231(I2C& comm, ConnectionId connection_id) :
+        Chip<I2C>(comm),
+        connection_id_(connection_id),
         status_(Status::Uninitialized),
         current_time_{},
         time_update_request_(false),
@@ -74,12 +82,12 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     bool initialize() override
     {
-        if (!get<interfaces::I2CInterface>().isReady()) {
+        if (!this->template get<I2C>().isReady()) {
             status_ = Status::Error;
             return false;
         }
 
-        setConnection<interfaces::I2CInterface>(get<interfaces::I2CInterface>().registerConnection(I2C_ADDRESS));
+        this->template setConnection<I2C>(connection_id_);
 
         time_update_request_   = false;
         alarm1_update_request_ = false;
@@ -103,7 +111,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     bool isReady() const override
     {
-        return status_ == Status::Ready && get<interfaces::I2CInterface>().isReady() && clock_ready_;
+        return status_ == Status::Ready && this->template get<I2C>().isReady() && clock_ready_;
     }
 
     Status getStatus() const override
@@ -123,10 +131,10 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     DriverTask run() override
     {
-        auto& i2c = get<interfaces::I2CInterface>();
+        auto& i2c = this->template get<I2C>();
 
         // PreInit: read status register (fixes race — transfer starts here, not in initialize())
-        while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), STATUS_REGISTER_LENGTH)) {
+        while (!this->template receive<I2C>(i2c.getRxBuffer(), STATUS_REGISTER_LENGTH)) {
             co_yield WaitCondition::immediate();
         }
         co_yield WaitCondition::comm(i2c);
@@ -142,7 +150,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
         if (control_status_ & STATUS_REG_OSF_BIT) {
             i2c.getTxBuffer()[0] = control_;
             i2c.getTxBuffer()[1] = control_status_ & ~STATUS_REG_OSF_BIT;
-            while (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), 2)) {
+            while (!this->template transmit<I2C>(i2c.getTxBuffer(), 2)) {
                 co_yield WaitCondition::immediate();
             }
             co_yield WaitCondition::comm(i2c);
@@ -158,7 +166,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
             if (time_update_request_) {
                 serializeCurrentTime();
-                while (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), TIME_REGISTER_LENGTH)) {
+                while (!this->template transmit<I2C>(i2c.getTxBuffer(), TIME_REGISTER_LENGTH)) {
                     co_yield WaitCondition::immediate();
                 }
                 time_update_request_ = false;
@@ -171,7 +179,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
             if (alarm1_update_request_) {
                 serializeAlarm1();
-                while (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), ALARM1_LENGTH)) {
+                while (!this->template transmit<I2C>(i2c.getTxBuffer(), ALARM1_LENGTH)) {
                     co_yield WaitCondition::immediate();
                 }
                 alarm1_update_request_ = false;
@@ -184,7 +192,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
             if (alarm2_update_request_) {
                 serializeAlarm2();
-                while (!this->transmit<interfaces::I2CInterface>(i2c.getTxBuffer(), ALARM2_LENGTH)) {
+                while (!this->template transmit<I2C>(i2c.getTxBuffer(), ALARM2_LENGTH)) {
                     co_yield WaitCondition::immediate();
                 }
                 alarm2_update_request_ = false;
@@ -196,7 +204,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
             }
 
             if (alarm1_read_request_) {
-                while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), ALARM1_LENGTH)) {
+                while (!this->template receive<I2C>(i2c.getRxBuffer(), ALARM1_LENGTH)) {
                     co_yield WaitCondition::immediate();
                 }
                 alarm1_read_request_ = false;
@@ -208,7 +216,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
             }
 
             if (alarm2_read_request_) {
-                while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), ALARM2_LENGTH)) {
+                while (!this->template receive<I2C>(i2c.getRxBuffer(), ALARM2_LENGTH)) {
                     co_yield WaitCondition::immediate();
                 }
                 alarm2_read_request_ = false;
@@ -221,7 +229,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
             if (--status_read_countdown_ == 0) {
                 status_read_countdown_ = kStatusReadInterval;
-                while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), STATUS_REGISTER_LENGTH)) {
+                while (!this->template receive<I2C>(i2c.getRxBuffer(), STATUS_REGISTER_LENGTH)) {
                     co_yield WaitCondition::immediate();
                 }
                 co_yield WaitCondition::comm(i2c);
@@ -232,7 +240,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
             }
 
             if (!time_read_paused_) {
-                while (!this->receive<interfaces::I2CInterface>(i2c.getRxBuffer(), TIME_REGISTER_LENGTH)) {
+                while (!this->template receive<I2C>(i2c.getRxBuffer(), TIME_REGISTER_LENGTH)) {
                     co_yield WaitCondition::immediate();
                 }
                 co_yield WaitCondition::comm(i2c);
@@ -406,8 +414,9 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
     }
 
     private:
-    Status  status_;
-    std::tm current_time_;
+    ConnectionId connection_id_;
+    Status       status_;
+    std::tm      current_time_;
 
     bool    time_update_request_;
     bool    alarm1_update_request_;
@@ -424,7 +433,6 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
     bool    last_transfer_ok_;
     bool    clock_ready_;
 
-    static constexpr uint8_t  I2C_ADDRESS            = 0x68;
     static constexpr uint8_t  TIME_REGISTER_LENGTH   = 7;
     static constexpr uint8_t  ALARM1_LENGTH          = 4;
     static constexpr uint8_t  ALARM2_LENGTH          = 3;
@@ -440,7 +448,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     void serializeCurrentTime()
     {
-        uint8_t* tx   = get<interfaces::I2CInterface>().getTxBuffer();
+        uint8_t* tx   = this->template get<I2C>().getTxBuffer();
         tx[0]         = static_cast<uint8_t>(((current_time_.tm_sec / 10) << 4) | (current_time_.tm_sec % 10));
         tx[1]         = static_cast<uint8_t>(((current_time_.tm_min / 10) << 4) | (current_time_.tm_min % 10));
         tx[2]         = static_cast<uint8_t>(((current_time_.tm_hour / 10) << 4) | (current_time_.tm_hour % 10));
@@ -454,7 +462,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     void deserializeCurrentTime()
     {
-        const uint8_t* rx      = get<interfaces::I2CInterface>().getRxBuffer();
+        const uint8_t* rx      = this->template get<I2C>().getRxBuffer();
         current_time_.tm_sec   = ((rx[0] & 0x70) >> 4) * 10 + (rx[0] & 0x0F);
         current_time_.tm_min   = ((rx[1] & 0x70) >> 4) * 10 + (rx[1] & 0x0F);
         current_time_.tm_hour  = ((rx[2] & 0x30) >> 4) * 10 + (rx[2] & 0x0F);
@@ -467,7 +475,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     void serializeAlarm1()
     {
-        uint8_t* tx = get<interfaces::I2CInterface>().getTxBuffer();
+        uint8_t* tx = this->template get<I2C>().getTxBuffer();
         tx[0]       = alarm1_seconds_;
         tx[1]       = alarm1_minutes_;
         tx[2]       = alarm1_hours_;
@@ -476,7 +484,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     void deserializeAlarm1()
     {
-        const uint8_t* rx = get<interfaces::I2CInterface>().getRxBuffer();
+        const uint8_t* rx = this->template get<I2C>().getRxBuffer();
         alarm1_seconds_   = rx[0];
         alarm1_minutes_   = rx[1];
         alarm1_hours_     = rx[2];
@@ -485,7 +493,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     void serializeAlarm2()
     {
-        uint8_t* tx = get<interfaces::I2CInterface>().getTxBuffer();
+        uint8_t* tx = this->template get<I2C>().getTxBuffer();
         tx[0]       = alarm2_minutes_;
         tx[1]       = alarm2_hours_;
         tx[2]       = alarm2_day_date_;
@@ -493,7 +501,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     void deserializeAlarm2()
     {
-        const uint8_t* rx = get<interfaces::I2CInterface>().getRxBuffer();
+        const uint8_t* rx = this->template get<I2C>().getRxBuffer();
         alarm2_minutes_   = rx[0];
         alarm2_hours_     = rx[1];
         alarm2_day_date_  = rx[2];
@@ -501,7 +509,7 @@ class DS3231 : public Chip<interfaces::I2CInterface> {
 
     void deserializeStatus()
     {
-        const uint8_t* rx = get<interfaces::I2CInterface>().getRxBuffer();
+        const uint8_t* rx = this->template get<I2C>().getRxBuffer();
         control_          = rx[0];
         control_status_   = rx[1];
         aging_offset_     = rx[2];

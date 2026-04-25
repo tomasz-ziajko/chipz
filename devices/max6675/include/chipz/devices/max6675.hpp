@@ -6,7 +6,6 @@
 #define CHIPZ_DEVICES_MAX6675_HPP
 
 #include <chipz/core/chip.hpp>
-#include <chipz/interfaces/spi_interface.hpp>
 #include <cstdint>
 #include <string>
 
@@ -23,10 +22,17 @@ namespace devices {
  * Scheduling (coroutine):
  *   Loop: receive (retry immediate if bus busy) → co_yield comm → deserialize → co_yield delayMs.
  */
-class MAX6675 : public Chip<interfaces::SPIInterface> {
+class MAX6675 : public Chip<CommunicationInterface> {
+    using SPI          = CommunicationInterface;
+    using ConnectionId = CommunicationInterface::ConnectionId;
+    using Status       = ChipBase::Status;
+
     public:
-    explicit MAX6675(interfaces::SPIInterface& comm) :
-        Chip<interfaces::SPIInterface>(comm),
+    static constexpr size_t kMaxTransfer = 2;
+
+    MAX6675(SPI& comm, ConnectionId connection_id) :
+        Chip<SPI>(comm),
+        connection_id_(connection_id),
         status_(Status::Uninitialized),
         temperature_(0),
         connection_open_(false),
@@ -36,10 +42,11 @@ class MAX6675 : public Chip<interfaces::SPIInterface> {
 
     bool initialize() override
     {
-        if (!get<interfaces::SPIInterface>().isReady()) {
+        if (!this->template get<SPI>().isReady()) {
             status_ = Status::Error;
             return false;
         }
+        this->template setConnection<SPI>(connection_id_);
         temperature_      = 0;
         connection_open_  = false;
         last_transfer_ok_ = false;
@@ -55,7 +62,7 @@ class MAX6675 : public Chip<interfaces::SPIInterface> {
 
     bool isReady() const override
     {
-        return status_ == Status::Ready && get<interfaces::SPIInterface>().isReady();
+        return status_ == Status::Ready && this->template get<SPI>().isReady();
     }
 
     Status getStatus() const override
@@ -80,11 +87,11 @@ class MAX6675 : public Chip<interfaces::SPIInterface> {
                 co_yield WaitCondition::demand();
                 continue;
             }
-            if (!receive<interfaces::SPIInterface>(get<interfaces::SPIInterface>().getRxBuffer(), kTransferLength)) {
+            if (!this->template receive<SPI>(this->template get<SPI>().getRxBuffer(), kTransferLength)) {
                 co_yield WaitCondition::immediate();
                 continue;
             }
-            co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+            co_yield WaitCondition::comm(this->template get<SPI>());
             if (last_transfer_ok_) {
                 deserialize();
             }
@@ -110,8 +117,9 @@ class MAX6675 : public Chip<interfaces::SPIInterface> {
     }
 
     private:
-    Status   status_;
-    uint32_t temperature_;
+    ConnectionId connection_id_;
+    Status       status_;
+    uint32_t     temperature_;
     bool     connection_open_;
     bool     last_transfer_ok_;
 
@@ -126,7 +134,7 @@ class MAX6675 : public Chip<interfaces::SPIInterface> {
 
     void deserialize()
     {
-        const uint8_t* rx = get<interfaces::SPIInterface>().getRxBuffer();
+        const uint8_t* rx = this->template get<SPI>().getRxBuffer();
 
         // Bits 14:3 hold the 12-bit temperature (MSB first, each LSB = 0.25°C)
         uint32_t raw = (static_cast<uint32_t>(rx[0]) << 8) | rx[1];

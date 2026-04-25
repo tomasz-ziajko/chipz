@@ -15,6 +15,7 @@ Makefile
 *.cmake
 !CMakeLists.txt
 !cmake/*.cmake.in
+!examples/stm32H533RET/cmake/*.cmake
 
 # Compiled binaries
 *.exe
