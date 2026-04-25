@@ -1,12 +1,3 @@
-# chipz_add_hd44780() is provided by cmake/ChipzISR.cmake (included from root).
-# Use it in your project instead of target_link_libraries(... chipz::hd44780):
-#
-#   chipz_add_hd44780(TARGET my_app
-#       [SPI_INSTANCE SPI1  SPI_HANDLE hspi1  SPI_IFACE g_spi1])
-#
-# SPI params are optional — HD44780 is output-only; omit them if the
-# driver is connected via GPIO bit-banging without async transfers.
-
 add_library(chipz_hd44780 INTERFACE)
 target_link_libraries(chipz_hd44780 INTERFACE chipz::core)
 target_sources(chipz_hd44780 INTERFACE

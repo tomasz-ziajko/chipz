@@ -9,3 +9,6 @@ compile_commands.json
 build/
 build-*/
 out/
+
+# STM32CubeIDE project settings
+.settings/

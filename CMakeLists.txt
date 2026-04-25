@@ -12,30 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(CHIPZ_BUILD_TESTS "Build chipz tests" OFF)
 
-include(cmake/ChipzISR.cmake)
-
-# Core infrastructure (peripheral base, interfaces, concepts, scheduler)
-add_library(chipz_core INTERFACE)
-target_sources(chipz_core INTERFACE
-    FILE_SET HEADERS
-    BASE_DIRS include
-    FILES
-        include/chipz/chipz.hpp
-        include/chipz/core/chip.hpp
-        include/chipz/core/communication_interface.hpp
-        include/chipz/core/concepts.hpp
-        include/chipz/core/timer_interface.hpp
-        include/chipz/core/core.hpp
-        include/chipz/core/completion_sources/timer_completion_source.hpp
-        include/chipz/core/completion_sources/external_completion_source.hpp
-        include/chipz/interfaces/i2c_interface.hpp
-        include/chipz/interfaces/spi_interface.hpp
-        include/chipz/interfaces/uart_interface.hpp
-        include/chipz/interfaces/parallel_interface.hpp
-        include/chipz/network/can/can_interface.hpp
-)
-target_compile_features(chipz_core INTERFACE cxx_std_20)
-add_library(chipz::core ALIAS chipz_core)
+add_subdirectory(include/chipz)
 
 # Test support target (shared mocks) — defined before devices so device
 # CMakeLists can reference it when CHIPZ_BUILD_TESTS is ON
@@ -122,6 +99,5 @@ write_basic_package_version_file(
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/chipzConfig.cmake
     ${CMAKE_CURRENT_BINARY_DIR}/chipzConfigVersion.cmake
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ChipzISR.cmake
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/chipz
 )

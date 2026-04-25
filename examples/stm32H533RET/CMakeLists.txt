@@ -40,25 +40,14 @@ add_executable(${CMAKE_PROJECT_NAME})
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
 
-# chipz library — header-only, provides chipz::core, chipz::ds3231,
-# chipz::max6675 targets and the chipz_add_*/chipz_generate_isrs() functions
 add_subdirectory(../.. chipz)
-
-# ---------------------------------------------------------------------------
-# chipz device registration — links device targets and records ISR metadata
-# ---------------------------------------------------------------------------
-
-chipz_add_ds3231(TARGET ${CMAKE_PROJECT_NAME})
-chipz_add_max6675(TARGET ${CMAKE_PROJECT_NAME})
+add_subdirectory(../../port/stm32h5xx port_stm32h5xx)
 
 # ---------------------------------------------------------------------------
 # chipz application sources
 # ---------------------------------------------------------------------------
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    ../../port/stm32h5xx/config.cpp
-    ../../port/stm32h5xx/chipz_isrs.cpp
-    ../../port/stm32h5xx/fault_handlers.cpp
     Chipz/app.cpp
 )
 
@@ -69,11 +58,17 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../port/stm32h5xx
 )
 
 # Suppress GCC 13 ABI change notes for iterator parameter passing (psabi)
 target_compile_options(${CMAKE_PROJECT_NAME} PRIVATE -Wno-psabi)
+
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+    -T${CMAKE_CURRENT_SOURCE_DIR}/STM32H533xx_FLASH.ld
+    -Wl,-Map=${CMAKE_PROJECT_NAME}.map,--cref
+    -Wl,--gc-sections
+    -Wl,--start-group -lc -lm -lstdc++ -lsupc++ -Wl,--end-group
+)
 
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
@@ -83,8 +78,17 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
 
+add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.elf
+    COMMAND ${CMAKE_OBJCOPY} -O ihex   $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${CMAKE_PROJECT_NAME}> ${CMAKE_PROJECT_NAME}.bin
+    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+)
+
 # Add linked libraries
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
     stm32cubemx
-    # chipz device targets linked via chipz_add_ds3231 / chipz_add_max6675 above
+    chipz::port_stm32h5xx
+    chipz::ds3231
+    chipz::max6675
 )
