@@ -30,8 +30,14 @@ namespace devices {
  * Note: requestStateChangeToNormalMode() / requestStateChangeToSleepMode() issue SPI directly
  * and bypass run() scheduling — caller is responsible for ensuring Core::service() drives follow-up.
  */
-class TJA1145 : public Chip<interfaces::SPIInterface> {
+template <size_t N = 2>
+class TJA1145 : public Chip<interfaces::SPIInterface<N>> {
+    using SPI = interfaces::SPIInterface<N>;
+    using Status = ChipBase::Status;
+
     public:
+    static constexpr size_t kMaxTransfer = 2;
+
     enum class State {
         Off,
         NormalRequested,
@@ -52,9 +58,9 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
      * @param config Configuration parameters
      * @param get_spi_transmission_disabled Function to check if SPI transmission is disabled
      */
-    TJA1145(interfaces::SPIInterface& comm, const Config& config,
+    TJA1145(SPI& comm, const Config& config,
             std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
-        Chip<interfaces::SPIInterface>(comm),
+        Chip<SPI>(comm),
         status_(Status::Uninitialized),
         state_(State::Standby),
         config_(config),
@@ -78,7 +84,7 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
     // Chip interface implementation
     bool initialize() override
     {
-        if (!get<interfaces::SPIInterface>().isReady()) {
+        if (!this->template get<SPI>().isReady()) {
             status_ = Status::Error;
             return false;
         }
@@ -111,7 +117,7 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
 
     bool isReady() const override
     {
-        return status_ == Status::Ready && get<interfaces::SPIInterface>().isReady() &&
+        return status_ == Status::Ready && this->template get<SPI>().isReady() &&
                (state_ == State::Normal || state_ == State::Sleep);
     }
 
@@ -161,11 +167,11 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
                 }
                 if (state_ == State::NormalRequested) {
                     checkState();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 requestNormalMode();
-                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                co_yield WaitCondition::comm(this->template get<SPI>());
                 continue;
             }
 
@@ -188,12 +194,12 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
                 system_event_checked_      = false;
                 event_enabled_             = false;
                 requestNormalMode();
-                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                co_yield WaitCondition::comm(this->template get<SPI>());
                 continue;
             }
             if (state_ == State::NormalRequested) {
                 checkState();
-                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                co_yield WaitCondition::comm(this->template get<SPI>());
                 continue;
             }
             if (state_ == State::Normal) {
@@ -201,58 +207,58 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
                 if (clear_system_event_request_) {
                     clear_system_event_request_ = false;
                     clearSystemEventFlag();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 if (clear_transceiver_event_request_) {
                     clear_transceiver_event_request_ = false;
                     clearTransceiverEventFlag();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 if (!can_control_updated_) {
                     can_control_updated_ = true;
                     setCanControl();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 if (!can_data_rate_set_) {
                     can_data_rate_set_ = true;
                     setDataRate();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 if (!event_enabled_) {
                     event_enabled_ = true;
                     setEventEnable();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 if (!can_extended_format_set_) {
                     can_extended_format_set_ = true;
                     setCanExtendedDataFormat();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 if (!system_event_checked_) {
                     system_event_checked_ = true;
                     requestSystemEventCheck();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 if (!transceiver_event_checked_) {
                     transceiver_event_checked_ = true;
                     requestTransceiverEventCheck();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     continue;
                 }
                 requestSleepMode();
-                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                co_yield WaitCondition::comm(this->template get<SPI>());
                 continue;
             }
             if (state_ == State::SleepRequested) {
                 checkState();
-                co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                co_yield WaitCondition::comm(this->template get<SPI>());
                 continue;
             }
 
@@ -379,7 +385,7 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
             return;
         }
 
-        const uint8_t* rx_buffer = get<interfaces::SPIInterface>().getRxBuffer();
+        const uint8_t* rx_buffer = this->template get<SPI>().getRxBuffer();
 
         switch (spi_op_) {
             case SpiOp::CheckingState:
@@ -420,10 +426,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
     void requestNormalMode()
     {
         state_             = State::NormalRequested;
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_MODE_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1]       = MODE_NORMAL;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -432,10 +438,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
     void requestSleepMode()
     {
         state_             = State::SleepRequested;
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_MODE_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1]       = MODE_SLEEP;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -444,10 +450,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
     void checkState()
     {
         spi_op_            = SpiOp::CheckingState;
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_MODE_CONTROL << 1) | (READ_ONLY_BIT);
         tx_buffer[1]       = 0;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -456,10 +462,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
     void requestSystemEventCheck()
     {
         spi_op_            = SpiOp::CheckingSystemEvent;
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_SYSTEM_EVENT_STATUS << 1) | (READ_ONLY_BIT);
         tx_buffer[1]       = 0;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -468,10 +474,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
     void requestTransceiverEventCheck()
     {
         spi_op_            = SpiOp::CheckingTransceiverEvent;
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_TRANSCEIVER_EVENT_STATUS << 1) | (READ_ONLY_BIT);
         tx_buffer[1]       = 0;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -479,10 +485,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
      */
     void setDataRate()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_DATA_RATE << 1) & (~READ_ONLY_BIT);
         tx_buffer[1]       = 0;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -490,10 +496,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
      */
     void setCanControl()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_CAN_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1]       = 0b00110001;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -501,7 +507,7 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
      */
     void setEventEnable()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         if (config_.enableWakeupOnCan) {
             tx_buffer[0] = (REGISTER_TRANSCEIVER_EVENT_ENABLE << 1) & (~READ_ONLY_BIT);
         }
@@ -509,7 +515,7 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
             tx_buffer[0] = (0x4C << 1) & (~READ_ONLY_BIT);
         }
         tx_buffer[1] = 0b00000001;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -517,10 +523,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
      */
     void setCanExtendedDataFormat()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_FRAME_CONTROL << 1) & (~READ_ONLY_BIT);
         tx_buffer[1]       = 0x80;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -528,10 +534,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
      */
     void clearSystemEventFlag()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_SYSTEM_EVENT_STATUS << 1) & (~READ_ONLY_BIT);
         tx_buffer[1]       = 0x16;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 
     /**
@@ -539,10 +545,10 @@ class TJA1145 : public Chip<interfaces::SPIInterface> {
      */
     void clearTransceiverEventFlag()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
         tx_buffer[0]       = (REGISTER_TRANSCEIVER_EVENT_STATUS << 1) & (~READ_ONLY_BIT);
         tx_buffer[1]       = 0x33;
-        this->transmit<interfaces::SPIInterface>(tx_buffer, 2);
+        this->template transmit<SPI>(tx_buffer, 2);
     }
 };
 

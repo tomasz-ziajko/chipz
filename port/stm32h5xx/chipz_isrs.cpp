@@ -7,33 +7,27 @@
  * @brief All interrupt handlers and HAL weak callback overrides for STM32H5xx
  *
  * This file is the single source of truth for every ISR on the STM32H5xx.
- * It replaces both stm32h5xx_it.c and any cmake-generated chipz_isr_handlers.cpp
- * — neither of those files should be compiled in a chipz project.
+ * It replaces both stm32h5xx_it.c and any cmake-generated chipz_isr_handlers.cpp.
  *
  * Weak symbol override
  * --------------------
  * Every function defined here is an extern "C" symbol without __weak, which
  * causes the linker to prefer these definitions over the __weak stubs in the
- * ST startup / HAL files. No code generation or cmake registration needed.
+ * ST startup / HAL files.
  *
  * Communication peripherals (I2C, SPI, UART)
- * -------------------------------------
- * The IRQ handler calls the HAL handler to advance the HAL state machine.
- * When the HAL determines the transfer is complete it calls the HAL weak
- * callback (e.g. HAL_I2C_MemTxCpltCallback), which is also overridden here.
- * The callback calls notify*() on the matching chipz interface object, which
- * sets interrupt_pending_ and wakes Core via the static pending flag.
+ * -------------------------------------------
+ * The HAL callback calls notify*() on the matching chipz interface via a
+ * CommunicationInterface* pointer. The pointers below are defined __weak so
+ * that they default to nullptr — an application defines them in app.cpp (or
+ * wherever the bus objects live) to override the weak default.
  *
- * Non-communication peripherals (EXTI, timers, DMA, CAN, ...)
- * -------------------------------------------------------------
- * The IRQ handler calls the HAL handler (if applicable) then calls
- * g_core.onIRQ(IRQn::xxx) to set a pending bit. Core routes to the chip that
- * registered for that IRQn in service() pass 1.
+ *   // In app.cpp:
+ *   chipz::interfaces::SPIInterface<2> g_spi2{...};
+ *   chipz::CommunicationInterface* g_spi2_iface = &g_spi2;
  *
- * HAL handles (hi2c1, hspi2, ...) are declared __weak so that only the
- * instances actually initialised by the application are linked. The callbacks
- * guard each branch with an address check — a weak symbol that is not defined
- * resolves to address 0, so the check is always false and the branch is skipped.
+ * All callbacks guard each notify call with a null-check so that unused
+ * peripherals are silent.
  *
  * SysTick
  * -------
@@ -41,10 +35,8 @@
  * chipz_systick_tick() (application-defined, calls SysTickTimer::onSysTick()).
  */
 
+#include <chipz/core/communication_interface.hpp>
 #include <chipz/core/core.hpp>
-#include <chipz/interfaces/i2c_interface.hpp>
-#include <chipz/interfaces/spi_interface.hpp>
-#include <chipz/interfaces/uart_interface.hpp>
 #include <chipz/network/can/can_interface.hpp>
 
 #include "irq.hpp"
@@ -89,30 +81,33 @@ __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
 #endif
 }
 
-// chipz interface objects — defined in config.cpp, guarded by the same macros
+// ---------------------------------------------------------------------------
+// chipz interface pointers — default weak nullptr; app.cpp overrides used buses
+// ---------------------------------------------------------------------------
+
 #ifdef HAL_I2C_MODULE_ENABLED
-extern chipz::interfaces::I2CInterface g_i2c1;
-extern chipz::interfaces::I2CInterface g_i2c2;
-extern chipz::interfaces::I2CInterface g_i2c3;
+__attribute__((weak)) chipz::CommunicationInterface* g_i2c1_iface = nullptr;
+__attribute__((weak)) chipz::CommunicationInterface* g_i2c2_iface = nullptr;
+__attribute__((weak)) chipz::CommunicationInterface* g_i2c3_iface = nullptr;
 #endif
 
 #ifdef HAL_SPI_MODULE_ENABLED
-extern chipz::interfaces::SPIInterface g_spi1;
-extern chipz::interfaces::SPIInterface g_spi2;
-extern chipz::interfaces::SPIInterface g_spi3;
-extern chipz::interfaces::SPIInterface g_spi4;
+__attribute__((weak)) chipz::CommunicationInterface* g_spi1_iface = nullptr;
+__attribute__((weak)) chipz::CommunicationInterface* g_spi2_iface = nullptr;
+__attribute__((weak)) chipz::CommunicationInterface* g_spi3_iface = nullptr;
+__attribute__((weak)) chipz::CommunicationInterface* g_spi4_iface = nullptr;
 #endif
 
 #ifdef HAL_UART_MODULE_ENABLED
-extern chipz::interfaces::UARTInterface g_uart1;
-extern chipz::interfaces::UARTInterface g_uart2;
-extern chipz::interfaces::UARTInterface g_uart3;
-extern chipz::interfaces::UARTInterface g_uart4;
+__attribute__((weak)) chipz::CommunicationInterface* g_uart1_iface = nullptr;
+__attribute__((weak)) chipz::CommunicationInterface* g_uart2_iface = nullptr;
+__attribute__((weak)) chipz::CommunicationInterface* g_uart3_iface = nullptr;
+__attribute__((weak)) chipz::CommunicationInterface* g_uart4_iface = nullptr;
 #endif
 
 #ifdef HAL_FDCAN_MODULE_ENABLED
-extern chipz::network::CANInterfaceBase* g_can1;
-extern chipz::network::CANInterfaceBase* g_can2;
+__attribute__((weak)) chipz::network::CANInterfaceBase* g_can1 = nullptr;
+__attribute__((weak)) chipz::network::CANInterfaceBase* g_can2 = nullptr;
 #endif
 
 extern "C" {
@@ -307,7 +302,7 @@ void UART4_IRQHandler()
 #endif
 
 // ---------------------------------------------------------------------------
-// FDCAN IRQ handlers — each instance has two interrupt lines (IT0, IT1)
+// FDCAN IRQ handlers
 // ---------------------------------------------------------------------------
 
 #ifdef HAL_FDCAN_MODULE_ENABLED
@@ -333,109 +328,50 @@ void FDCAN2_IT1_IRQHandler()
 
 // ---------------------------------------------------------------------------
 // HAL I2C weak callback overrides
-//
-// Each callback checks which handle fired and calls notify*() on the matching
-// chipz interface. The address check (&hix == nullptr) is always false when
-// the handle is properly defined; when it is an undefined weak symbol it
-// resolves to address 0 and the branch is safely skipped.
 // ---------------------------------------------------------------------------
 
 #ifdef HAL_I2C_MODULE_ENABLED
 
 extern "C" void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef* h)
 {
-    if (&hi2c1 && h == &hi2c1) {
-        g_i2c1.notifyTransferComplete(true);
-        return;
-    }
-    if (&hi2c2 && h == &hi2c2) {
-        g_i2c2.notifyTransferComplete(true);
-        return;
-    }
-    if (&hi2c3 && h == &hi2c3) {
-        g_i2c3.notifyTransferComplete(true);
-        return;
-    }
+    if (&hi2c1 && h == &hi2c1 && g_i2c1_iface) { g_i2c1_iface->notifyTransferComplete(true); return; }
+    if (&hi2c2 && h == &hi2c2 && g_i2c2_iface) { g_i2c2_iface->notifyTransferComplete(true); return; }
+    if (&hi2c3 && h == &hi2c3 && g_i2c3_iface) { g_i2c3_iface->notifyTransferComplete(true); return; }
 }
 
 extern "C" void HAL_I2C_MemTxCpltCallback(I2C_HandleTypeDef* h)
 {
-    if (&hi2c1 && h == &hi2c1) {
-        g_i2c1.notifyTransferComplete(true);
-        return;
-    }
-    if (&hi2c2 && h == &hi2c2) {
-        g_i2c2.notifyTransferComplete(true);
-        return;
-    }
-    if (&hi2c3 && h == &hi2c3) {
-        g_i2c3.notifyTransferComplete(true);
-        return;
-    }
+    if (&hi2c1 && h == &hi2c1 && g_i2c1_iface) { g_i2c1_iface->notifyTransferComplete(true); return; }
+    if (&hi2c2 && h == &hi2c2 && g_i2c2_iface) { g_i2c2_iface->notifyTransferComplete(true); return; }
+    if (&hi2c3 && h == &hi2c3 && g_i2c3_iface) { g_i2c3_iface->notifyTransferComplete(true); return; }
 }
 
 extern "C" void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef* h)
 {
-    if (&hi2c1 && h == &hi2c1) {
-        g_i2c1.notifyTransferComplete(true);
-        return;
-    }
-    if (&hi2c2 && h == &hi2c2) {
-        g_i2c2.notifyTransferComplete(true);
-        return;
-    }
-    if (&hi2c3 && h == &hi2c3) {
-        g_i2c3.notifyTransferComplete(true);
-        return;
-    }
+    if (&hi2c1 && h == &hi2c1 && g_i2c1_iface) { g_i2c1_iface->notifyTransferComplete(true); return; }
+    if (&hi2c2 && h == &hi2c2 && g_i2c2_iface) { g_i2c2_iface->notifyTransferComplete(true); return; }
+    if (&hi2c3 && h == &hi2c3 && g_i2c3_iface) { g_i2c3_iface->notifyTransferComplete(true); return; }
 }
 
 extern "C" void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef* h)
 {
-    if (&hi2c1 && h == &hi2c1) {
-        g_i2c1.notifyTransferComplete(true);
-        return;
-    }
-    if (&hi2c2 && h == &hi2c2) {
-        g_i2c2.notifyTransferComplete(true);
-        return;
-    }
-    if (&hi2c3 && h == &hi2c3) {
-        g_i2c3.notifyTransferComplete(true);
-        return;
-    }
+    if (&hi2c1 && h == &hi2c1 && g_i2c1_iface) { g_i2c1_iface->notifyTransferComplete(true); return; }
+    if (&hi2c2 && h == &hi2c2 && g_i2c2_iface) { g_i2c2_iface->notifyTransferComplete(true); return; }
+    if (&hi2c3 && h == &hi2c3 && g_i2c3_iface) { g_i2c3_iface->notifyTransferComplete(true); return; }
 }
 
 extern "C" void HAL_I2C_ErrorCallback(I2C_HandleTypeDef* h)
 {
-    if (&hi2c1 && h == &hi2c1) {
-        g_i2c1.notifyError();
-        return;
-    }
-    if (&hi2c2 && h == &hi2c2) {
-        g_i2c2.notifyError();
-        return;
-    }
-    if (&hi2c3 && h == &hi2c3) {
-        g_i2c3.notifyError();
-        return;
-    }
+    if (&hi2c1 && h == &hi2c1 && g_i2c1_iface) { g_i2c1_iface->notifyError(); return; }
+    if (&hi2c2 && h == &hi2c2 && g_i2c2_iface) { g_i2c2_iface->notifyError(); return; }
+    if (&hi2c3 && h == &hi2c3 && g_i2c3_iface) { g_i2c3_iface->notifyError(); return; }
 }
 
 extern "C" void HAL_I2C_AbortCpltCallback(I2C_HandleTypeDef* h)
 {
-    if (&hi2c1 && h == &hi2c1) {
-        g_i2c1.notifyError();
-        return;
-    }
-    if (&hi2c2 && h == &hi2c2) {
-        g_i2c2.notifyError();
-        return;
-    }
-    if (&hi2c3 && h == &hi2c3) {
-        g_i2c3.notifyError();
-        return;
-    }
+    if (&hi2c1 && h == &hi2c1 && g_i2c1_iface) { g_i2c1_iface->notifyError(); return; }
+    if (&hi2c2 && h == &hi2c2 && g_i2c2_iface) { g_i2c2_iface->notifyError(); return; }
+    if (&hi2c3 && h == &hi2c3 && g_i2c3_iface) { g_i2c3_iface->notifyError(); return; }
 }
 
 #endif  // HAL_I2C_MODULE_ENABLED
@@ -448,82 +384,34 @@ extern "C" void HAL_I2C_AbortCpltCallback(I2C_HandleTypeDef* h)
 
 extern "C" void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef* h)
 {
-    if (&hspi1 && h == &hspi1) {
-        g_spi1.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi2 && h == &hspi2) {
-        g_spi2.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi3 && h == &hspi3) {
-        g_spi3.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi4 && h == &hspi4) {
-        g_spi4.notifyTransferComplete(true);
-        return;
-    }
+    if (&hspi1 && h == &hspi1 && g_spi1_iface) { g_spi1_iface->notifyTransferComplete(true); return; }
+    if (&hspi2 && h == &hspi2 && g_spi2_iface) { g_spi2_iface->notifyTransferComplete(true); return; }
+    if (&hspi3 && h == &hspi3 && g_spi3_iface) { g_spi3_iface->notifyTransferComplete(true); return; }
+    if (&hspi4 && h == &hspi4 && g_spi4_iface) { g_spi4_iface->notifyTransferComplete(true); return; }
 }
 
 extern "C" void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef* h)
 {
-    if (&hspi1 && h == &hspi1) {
-        g_spi1.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi2 && h == &hspi2) {
-        g_spi2.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi3 && h == &hspi3) {
-        g_spi3.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi4 && h == &hspi4) {
-        g_spi4.notifyTransferComplete(true);
-        return;
-    }
+    if (&hspi1 && h == &hspi1 && g_spi1_iface) { g_spi1_iface->notifyTransferComplete(true); return; }
+    if (&hspi2 && h == &hspi2 && g_spi2_iface) { g_spi2_iface->notifyTransferComplete(true); return; }
+    if (&hspi3 && h == &hspi3 && g_spi3_iface) { g_spi3_iface->notifyTransferComplete(true); return; }
+    if (&hspi4 && h == &hspi4 && g_spi4_iface) { g_spi4_iface->notifyTransferComplete(true); return; }
 }
 
 extern "C" void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef* h)
 {
-    if (&hspi1 && h == &hspi1) {
-        g_spi1.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi2 && h == &hspi2) {
-        g_spi2.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi3 && h == &hspi3) {
-        g_spi3.notifyTransferComplete(true);
-        return;
-    }
-    if (&hspi4 && h == &hspi4) {
-        g_spi4.notifyTransferComplete(true);
-        return;
-    }
+    if (&hspi1 && h == &hspi1 && g_spi1_iface) { g_spi1_iface->notifyTransferComplete(true); return; }
+    if (&hspi2 && h == &hspi2 && g_spi2_iface) { g_spi2_iface->notifyTransferComplete(true); return; }
+    if (&hspi3 && h == &hspi3 && g_spi3_iface) { g_spi3_iface->notifyTransferComplete(true); return; }
+    if (&hspi4 && h == &hspi4 && g_spi4_iface) { g_spi4_iface->notifyTransferComplete(true); return; }
 }
 
 extern "C" void HAL_SPI_ErrorCallback(SPI_HandleTypeDef* h)
 {
-    if (&hspi1 && h == &hspi1) {
-        g_spi1.notifyError();
-        return;
-    }
-    if (&hspi2 && h == &hspi2) {
-        g_spi2.notifyError();
-        return;
-    }
-    if (&hspi3 && h == &hspi3) {
-        g_spi3.notifyError();
-        return;
-    }
-    if (&hspi4 && h == &hspi4) {
-        g_spi4.notifyError();
-        return;
-    }
+    if (&hspi1 && h == &hspi1 && g_spi1_iface) { g_spi1_iface->notifyError(); return; }
+    if (&hspi2 && h == &hspi2 && g_spi2_iface) { g_spi2_iface->notifyError(); return; }
+    if (&hspi3 && h == &hspi3 && g_spi3_iface) { g_spi3_iface->notifyError(); return; }
+    if (&hspi4 && h == &hspi4 && g_spi4_iface) { g_spi4_iface->notifyError(); return; }
 }
 
 #endif  // HAL_SPI_MODULE_ENABLED
@@ -536,107 +424,50 @@ extern "C" void HAL_SPI_ErrorCallback(SPI_HandleTypeDef* h)
 
 extern "C" void HAL_UART_TxCpltCallback(UART_HandleTypeDef* h)
 {
-    if (&huart1 && h == &huart1) {
-        g_uart1.notifyTxComplete();
-        return;
-    }
-    if (&huart2 && h == &huart2) {
-        g_uart2.notifyTxComplete();
-        return;
-    }
-    if (&huart3 && h == &huart3) {
-        g_uart3.notifyTxComplete();
-        return;
-    }
-    if (&huart4 && h == &huart4) {
-        g_uart4.notifyTxComplete();
-        return;
-    }
+    if (&huart1 && h == &huart1 && g_uart1_iface) { g_uart1_iface->notifyTransferComplete(true); return; }
+    if (&huart2 && h == &huart2 && g_uart2_iface) { g_uart2_iface->notifyTransferComplete(true); return; }
+    if (&huart3 && h == &huart3 && g_uart3_iface) { g_uart3_iface->notifyTransferComplete(true); return; }
+    if (&huart4 && h == &huart4 && g_uart4_iface) { g_uart4_iface->notifyTransferComplete(true); return; }
 }
 
 extern "C" void HAL_UART_RxCpltCallback(UART_HandleTypeDef* h)
 {
-    if (&huart1 && h == &huart1) {
-        g_uart1.notifyRxComplete();
-        return;
-    }
-    if (&huart2 && h == &huart2) {
-        g_uart2.notifyRxComplete();
-        return;
-    }
-    if (&huart3 && h == &huart3) {
-        g_uart3.notifyRxComplete();
-        return;
-    }
-    if (&huart4 && h == &huart4) {
-        g_uart4.notifyRxComplete();
-        return;
-    }
+    // notifyRxComplete() is virtual — dispatches to UARTInterface::notifyRxComplete()
+    // which clears rx_in_progress_ before delegating to the base class
+    if (&huart1 && h == &huart1 && g_uart1_iface) { g_uart1_iface->notifyRxComplete(); return; }
+    if (&huart2 && h == &huart2 && g_uart2_iface) { g_uart2_iface->notifyRxComplete(); return; }
+    if (&huart3 && h == &huart3 && g_uart3_iface) { g_uart3_iface->notifyRxComplete(); return; }
+    if (&huart4 && h == &huart4 && g_uart4_iface) { g_uart4_iface->notifyRxComplete(); return; }
 }
 
 extern "C" void HAL_UART_ErrorCallback(UART_HandleTypeDef* h)
 {
-    if (&huart1 && h == &huart1) {
-        g_uart1.notifyError();
-        return;
-    }
-    if (&huart2 && h == &huart2) {
-        g_uart2.notifyError();
-        return;
-    }
-    if (&huart3 && h == &huart3) {
-        g_uart3.notifyError();
-        return;
-    }
-    if (&huart4 && h == &huart4) {
-        g_uart4.notifyError();
-        return;
-    }
+    if (&huart1 && h == &huart1 && g_uart1_iface) { g_uart1_iface->notifyError(); return; }
+    if (&huart2 && h == &huart2 && g_uart2_iface) { g_uart2_iface->notifyError(); return; }
+    if (&huart3 && h == &huart3 && g_uart3_iface) { g_uart3_iface->notifyError(); return; }
+    if (&huart4 && h == &huart4 && g_uart4_iface) { g_uart4_iface->notifyError(); return; }
 }
 
 extern "C" void HAL_UART_AbortCpltCallback(UART_HandleTypeDef* h)
 {
-    if (&huart1 && h == &huart1) {
-        g_uart1.notifyError();
-        return;
-    }
-    if (&huart2 && h == &huart2) {
-        g_uart2.notifyError();
-        return;
-    }
-    if (&huart3 && h == &huart3) {
-        g_uart3.notifyError();
-        return;
-    }
-    if (&huart4 && h == &huart4) {
-        g_uart4.notifyError();
-        return;
-    }
+    if (&huart1 && h == &huart1 && g_uart1_iface) { g_uart1_iface->notifyError(); return; }
+    if (&huart2 && h == &huart2 && g_uart2_iface) { g_uart2_iface->notifyError(); return; }
+    if (&huart3 && h == &huart3 && g_uart3_iface) { g_uart3_iface->notifyError(); return; }
+    if (&huart4 && h == &huart4 && g_uart4_iface) { g_uart4_iface->notifyError(); return; }
 }
 
 #endif  // HAL_UART_MODULE_ENABLED
 
 // ---------------------------------------------------------------------------
 // HAL FDCAN weak callback overrides
-//
-// RxFifo0 is used by default; RxFifo1 forwards to the same handler so that
-// drivers using either FIFO work without changes to the ISR file. The FIFO
-// location the RxFunction actually reads from is determined by the lambda in
-// config.cpp (e.g. FDCAN_RX_FIFO0 or FDCAN_RX_FIFO1).
 // ---------------------------------------------------------------------------
 
 #ifdef HAL_FDCAN_MODULE_ENABLED
 
 extern "C" void HAL_FDCAN_TxBufferCompleteCallback(FDCAN_HandleTypeDef* h, uint32_t)
 {
-    if (&hfdcan1 && h == &hfdcan1) {
-        g_can1->notifyTxComplete();
-        return;
-    }
-    if (&hfdcan2 && h == &hfdcan2) {
-        g_can2->notifyTxComplete();
-        return;
-    }
+    if (&hfdcan1 && h == &hfdcan1 && g_can1) { g_can1->notifyTxComplete(); return; }
+    if (&hfdcan2 && h == &hfdcan2 && g_can2) { g_can2->notifyTxComplete(); return; }
 }
 
 static void fdcan_rx_dispatch(FDCAN_HandleTypeDef* h, uint32_t fifo, chipz::network::CANInterfaceBase* iface)
@@ -653,50 +484,26 @@ static void fdcan_rx_dispatch(FDCAN_HandleTypeDef* h, uint32_t fifo, chipz::netw
 
 extern "C" void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef* h, uint32_t)
 {
-    if (&hfdcan1 && h == &hfdcan1) {
-        fdcan_rx_dispatch(h, FDCAN_RX_FIFO0, g_can1);
-        return;
-    }
-    if (&hfdcan2 && h == &hfdcan2) {
-        fdcan_rx_dispatch(h, FDCAN_RX_FIFO0, g_can2);
-        return;
-    }
+    if (&hfdcan1 && h == &hfdcan1 && g_can1) { fdcan_rx_dispatch(h, FDCAN_RX_FIFO0, g_can1); return; }
+    if (&hfdcan2 && h == &hfdcan2 && g_can2) { fdcan_rx_dispatch(h, FDCAN_RX_FIFO0, g_can2); return; }
 }
 
 extern "C" void HAL_FDCAN_RxFifo1Callback(FDCAN_HandleTypeDef* h, uint32_t)
 {
-    if (&hfdcan1 && h == &hfdcan1) {
-        fdcan_rx_dispatch(h, FDCAN_RX_FIFO1, g_can1);
-        return;
-    }
-    if (&hfdcan2 && h == &hfdcan2) {
-        fdcan_rx_dispatch(h, FDCAN_RX_FIFO1, g_can2);
-        return;
-    }
+    if (&hfdcan1 && h == &hfdcan1 && g_can1) { fdcan_rx_dispatch(h, FDCAN_RX_FIFO1, g_can1); return; }
+    if (&hfdcan2 && h == &hfdcan2 && g_can2) { fdcan_rx_dispatch(h, FDCAN_RX_FIFO1, g_can2); return; }
 }
 
 extern "C" void HAL_FDCAN_ErrorCallback(FDCAN_HandleTypeDef* h)
 {
-    if (&hfdcan1 && h == &hfdcan1) {
-        g_can1->notifyError();
-        return;
-    }
-    if (&hfdcan2 && h == &hfdcan2) {
-        g_can2->notifyError();
-        return;
-    }
+    if (&hfdcan1 && h == &hfdcan1 && g_can1) { g_can1->notifyError(); return; }
+    if (&hfdcan2 && h == &hfdcan2 && g_can2) { g_can2->notifyError(); return; }
 }
 
 extern "C" void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef* h, uint32_t)
 {
-    if (&hfdcan1 && h == &hfdcan1) {
-        g_can1->notifyError();
-        return;
-    }
-    if (&hfdcan2 && h == &hfdcan2) {
-        g_can2->notifyError();
-        return;
-    }
+    if (&hfdcan1 && h == &hfdcan1 && g_can1) { g_can1->notifyError(); return; }
+    if (&hfdcan2 && h == &hfdcan2 && g_can2) { g_can2->notifyError(); return; }
 }
 
 #endif  // HAL_FDCAN_MODULE_ENABLED

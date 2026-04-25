@@ -1,6 +1,5 @@
-add_library(chipz_port_stm32h5xx STATIC
+add_library(chipz_port_stm32h5xx OBJECT
     chipz_isrs.cpp
-    config.cpp
     fault_handlers.cpp
 )
 target_include_directories(chipz_port_stm32h5xx PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

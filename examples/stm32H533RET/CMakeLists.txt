@@ -89,6 +89,6 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
     stm32cubemx
     chipz::port_stm32h5xx
-    chipz::ds3231
+    chipz::core
     chipz::max6675
 )

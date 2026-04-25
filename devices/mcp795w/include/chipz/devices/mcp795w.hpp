@@ -30,15 +30,16 @@ namespace devices {
  *
  * Uses std::tm for compatibility with DS3231 interface.
  */
-class MCP795W : public Chip<interfaces::SPIInterface> {
+template <size_t N = 11>
+class MCP795W : public Chip<interfaces::SPIInterface<N>> {
+    using SPI = interfaces::SPIInterface<N>;
+    using Status = ChipBase::Status;
+
     public:
-    /**
-     * @brief Construct MCP795W driver with communication interface
-     * @param comm Reference to communication interface (SPI)
-     * @param get_spi_transmission_disabled Function to check if SPI transmission is disabled
-     */
-    MCP795W(interfaces::SPIInterface& comm, std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
-        Chip<interfaces::SPIInterface>(comm),
+    static constexpr size_t kMaxTransfer = 11;
+
+    MCP795W(SPI& comm, std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
+        Chip<SPI>(comm),
         status_(Status::Uninitialized),
         current_time_{},
         alarm_time_{},
@@ -55,7 +56,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
     // Chip interface implementation
     bool initialize() override
     {
-        if (!get<interfaces::SPIInterface>().isReady()) {
+        if (!this->template get<SPI>().isReady()) {
             status_ = Status::Error;
             return false;
         }
@@ -85,7 +86,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
 
     bool isReady() const override
     {
-        return status_ == Status::Ready && get<interfaces::SPIInterface>().isReady() && clock_started_;
+        return status_ == Status::Ready && this->template get<SPI>().isReady() && clock_started_;
     }
 
     Status getStatus() const override
@@ -118,7 +119,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
                 if (set_alarm_request_) {
                     set_alarm_request_ = false;
                     buildAlarm();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     if (!last_transfer_ok_) {
                         status_ = Status::Error;
                         continue;
@@ -131,7 +132,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
                 if (date_reset_request_) {
                     date_reset_request_ = false;
                     updateTimekeep();
-                    co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+                    co_yield WaitCondition::comm(this->template get<SPI>());
                     if (!last_transfer_ok_) {
                         status_ = Status::Error;
                         continue;
@@ -144,7 +145,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
             }
             shutdown_allowed_ = disable_request_ && !set_alarm_request_ && !date_reset_request_;
             requestCurrentTimeTransmission();
-            co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
+            co_yield WaitCondition::comm(this->template get<SPI>());
             if (!last_transfer_ok_) {
                 status_ = Status::Error;
                 continue;
@@ -301,7 +302,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
      */
     void updateTimekeep()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_WRITE;
         tx_buffer[1] = TIME_AND_DATE_START_ADDRESS;
@@ -352,7 +353,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
         // Control register - Enable ALARM 0
         tx_buffer[10] = 0x10;
 
-        this->transmit<interfaces::SPIInterface>(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
+        this->template transmit<SPI>(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
     }
 
     /**
@@ -360,12 +361,12 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
      */
     void requestCurrentTimeTransmission()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_READ;
         tx_buffer[1] = TIME_AND_DATE_START_ADDRESS;
 
-        this->transmit<interfaces::SPIInterface>(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
+        this->template transmit<SPI>(tx_buffer, TIMEKEEP_SEND_TRANSMISSION_LENGTH);
     }
 
     /**
@@ -373,7 +374,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
      */
     void decodeTimekeep()
     {
-        const uint8_t* rx_buffer = get<interfaces::SPIInterface>().getRxBuffer();
+        const uint8_t* rx_buffer = this->template get<SPI>().getRxBuffer();
 
         // Skip hundreds of seconds register (index 2)
 
@@ -413,7 +414,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
      */
     void buildAlarm()
     {
-        uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
+        uint8_t* tx_buffer = this->template get<SPI>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_WRITE;
         tx_buffer[1] = ALARM0_START_ADDRESS;
@@ -457,7 +458,7 @@ class MCP795W : public Chip<interfaces::SPIInterface> {
         tx_buffer[7]  = ((tx_buffer[7] << 4) & 0x10);
         tx_buffer[7] |= ((month % 10) & 0x0F);
 
-        this->transmit<interfaces::SPIInterface>(tx_buffer, ALARM0_SEND_TRANSMISSION_LENGTH);
+        this->template transmit<SPI>(tx_buffer, ALARM0_SEND_TRANSMISSION_LENGTH);
     }
 };
 

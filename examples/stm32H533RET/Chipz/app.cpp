@@ -6,9 +6,7 @@
  * @file app.cpp
  * @brief chipz application entry points for the NUCLEO-H533RE example
  *
- * Demonstrates two peripherals on a shared chipz::Core:
- *   DS3231 RTC     — I2C1, reads time every 100 ms
- *   MAX6675        — SPI2, reads thermocouple temperature every 1000 ms
+ * Wires up the MAX6675 thermocouple driver over SPI2.
  *
  * Entry points called from main.c:
  *   chipz_app_init() — registers peripherals, initialises Core
@@ -23,9 +21,7 @@
 
 #include <chipz/core/core.hpp>
 #include <chipz/core/timer_interface.hpp>
-#include <chipz/devices/ds3231.hpp>
 #include <chipz/devices/max6675.hpp>
-#include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include "irq.hpp"
 
@@ -68,17 +64,32 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// HAL handle — defined by CubeMX; extern declared here
+// ---------------------------------------------------------------------------
+
+extern "C" {
+    __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
+}
+
+// ---------------------------------------------------------------------------
 // chipz objects
 // ---------------------------------------------------------------------------
 
-extern chipz::interfaces::I2CInterface g_i2c1;
-extern chipz::interfaces::SPIInterface g_spi2;
+using SPI2Type = chipz::interfaces::SPIInterface<chipz::devices::MAX6675<>::kMaxTransfer>;
+
+SPI2Type g_spi2{
+    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
+        return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len);
+    }
+};
+
+// Override the weak pointer in chipz_isrs.cpp — ISR callbacks route through this
+chipz::CommunicationInterface* g_spi2_iface = &g_spi2;
 
 SysTickTimer g_systick_timer;
 chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_systick_timer};
 
-chipz::devices::DS3231  g_ds3231 {g_i2c1};
-chipz::devices::MAX6675 g_max6675{g_spi2};
+chipz::devices::MAX6675<> g_max6675{g_spi2};
 
 // ---------------------------------------------------------------------------
 // SysTick bridge — called from SysTick_Handler in chipz_isrs.cpp
@@ -93,7 +104,6 @@ extern "C" void chipz_systick_tick() {
 // ---------------------------------------------------------------------------
 
 extern "C" void chipz_app_init() {
-    g_core.add(g_ds3231);
     g_core.add(g_max6675);
     g_core.initialize();
 }
