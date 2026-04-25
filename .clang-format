@@ -1,3 +1,5 @@
+# Requires clang-format 21 or later
+
 BasedOnStyle: Google
 AccessModifierOffset: 0
 IndentWidth: 4
