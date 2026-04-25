@@ -58,6 +58,7 @@
  */
 
 #include "fault_handlers.hpp"
+
 #include "stm32h5xx_hal.h"
 
 namespace chipz {
@@ -66,20 +67,20 @@ namespace stm32h5xx {
 
 // Placed in .noinit so the C startup library does not zero it on reset.
 // Survives watchdog and software resets; contents remain valid across boots.
-__attribute__((section(".noinit")))
-FaultInfo g_fault_info;
+__attribute__((section(".noinit"))) FaultInfo g_fault_info;
 
-} // namespace stm32h5xx
-} // namespace port
-} // namespace chipz
+}  // namespace stm32h5xx
+}  // namespace port
+}  // namespace chipz
 
 // ---------------------------------------------------------------------------
 // Default (weak) report hook.
 // Replace in application code to emit the capture over UART/ITM before halt.
 // ---------------------------------------------------------------------------
 
-extern "C" __attribute__((weak))
-void chipz_fault_report(const chipz::port::stm32h5xx::FaultInfo&) {}
+extern "C" __attribute__((weak)) void chipz_fault_report(const chipz::port::stm32h5xx::FaultInfo&)
+{
+}
 
 // ---------------------------------------------------------------------------
 // Common C handler — called by each assembly trampoline.
@@ -89,8 +90,7 @@ void chipz_fault_report(const chipz::port::stm32h5xx::FaultInfo&) {}
 //   fault_val  FaultType enum value cast to uint32_t.
 // ---------------------------------------------------------------------------
 
-extern "C"
-void chipz_fault_handler_c(uint32_t* frame, uint32_t exc_ret, uint32_t fault_val)
+extern "C" void chipz_fault_handler_c(uint32_t* frame, uint32_t exc_ret, uint32_t fault_val)
 {
     using namespace chipz::port::stm32h5xx;
 
@@ -115,17 +115,20 @@ void chipz_fault_handler_c(uint32_t* frame, uint32_t exc_ret, uint32_t fault_val
             f.s[i] = frame[8U + i];
         }
         f.fpscr = frame[24U];
-    } else {
-        for (unsigned i = 0U; i < 16U; ++i) { f.s[i] = 0U; }
+    }
+    else {
+        for (unsigned i = 0U; i < 16U; ++i) {
+            f.s[i] = 0U;
+        }
         f.fpscr = 0U;
     }
 
     // --- Stack pointer and mode --------------------------------------------
     f.sp         = reinterpret_cast<uint32_t>(frame);
     f.exc_return = exc_ret;
-    __asm volatile ("mrs %0, msp"     : "=r" (f.msp));
-    __asm volatile ("mrs %0, psp"     : "=r" (f.psp));
-    __asm volatile ("mrs %0, control" : "=r" (f.control));
+    __asm volatile("mrs %0, msp" : "=r"(f.msp));
+    __asm volatile("mrs %0, psp" : "=r"(f.psp));
+    __asm volatile("mrs %0, control" : "=r"(f.control));
 
     // --- SCB fault-status registers ----------------------------------------
     // Read and clear CFSR/HFSR to prevent stale bits from accumulating across
@@ -133,8 +136,8 @@ void chipz_fault_handler_c(uint32_t* frame, uint32_t exc_ret, uint32_t fault_val
     f.cfsr  = SCB->CFSR;
     f.hfsr  = SCB->HFSR;
     f.dfsr  = SCB->DFSR;
-    f.mmfar = SCB->MMFAR; // valid only when f.cfsr bit MMARVALID (bit 7) is set
-    f.bfar  = SCB->BFAR;  // valid only when f.cfsr bit BFARVALID (bit 15) is set
+    f.mmfar = SCB->MMFAR;  // valid only when f.cfsr bit MMARVALID (bit 7) is set
+    f.bfar  = SCB->BFAR;   // valid only when f.cfsr bit BFARVALID (bit 15) is set
     f.afsr  = SCB->AFSR;
 
     // Clear sticky bits so the next reset starts clean (W1C registers).
@@ -162,7 +165,8 @@ void chipz_fault_handler_c(uint32_t* frame, uint32_t exc_ret, uint32_t fault_val
     // BKPT suspends execution when a debugger is attached (J-Link, ST-LINK).
     // With no debugger, the CPU enters Lockup and is reset by the watchdog.
     __BKPT(0);
-    while (true) {}
+    while (true) {
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -178,60 +182,52 @@ void chipz_fault_handler_c(uint32_t* frame, uint32_t exc_ret, uint32_t fault_val
 
 extern "C" {
 
-__attribute__((naked))
-void HardFault_Handler()
+__attribute__((naked)) void HardFault_Handler()
 {
-    __asm volatile (
+    __asm volatile(
         "tst   lr, #4                \n"
         "ite   eq                    \n"
         "mrseq r0, msp               \n"  // bit 2 == 0: MSP was active
         "mrsne r0, psp               \n"  // bit 2 == 1: PSP was active
         "mov   r1, lr                \n"  // R1 = EXC_RETURN
         "movs  r2, #0                \n"  // R2 = FaultType::HardFault
-        "b     chipz_fault_handler_c \n"
-    );
+        "b     chipz_fault_handler_c \n");
 }
 
-__attribute__((naked))
-void MemManage_Handler()
+__attribute__((naked)) void MemManage_Handler()
 {
-    __asm volatile (
+    __asm volatile(
         "tst   lr, #4                \n"
         "ite   eq                    \n"
         "mrseq r0, msp               \n"
         "mrsne r0, psp               \n"
         "mov   r1, lr                \n"
         "movs  r2, #1                \n"  // R2 = FaultType::MemManage
-        "b     chipz_fault_handler_c \n"
-    );
+        "b     chipz_fault_handler_c \n");
 }
 
-__attribute__((naked))
-void BusFault_Handler()
+__attribute__((naked)) void BusFault_Handler()
 {
-    __asm volatile (
+    __asm volatile(
         "tst   lr, #4                \n"
         "ite   eq                    \n"
         "mrseq r0, msp               \n"
         "mrsne r0, psp               \n"
         "mov   r1, lr                \n"
         "movs  r2, #2                \n"  // R2 = FaultType::BusFault
-        "b     chipz_fault_handler_c \n"
-    );
+        "b     chipz_fault_handler_c \n");
 }
 
-__attribute__((naked))
-void UsageFault_Handler()
+__attribute__((naked)) void UsageFault_Handler()
 {
-    __asm volatile (
+    __asm volatile(
         "tst   lr, #4                \n"
         "ite   eq                    \n"
         "mrseq r0, msp               \n"
         "mrsne r0, psp               \n"
         "mov   r1, lr                \n"
         "movs  r2, #3                \n"  // R2 = FaultType::UsageFault
-        "b     chipz_fault_handler_c \n"
-    );
+        "b     chipz_fault_handler_c \n");
 }
 
-} // extern "C"
+}  // extern "C"

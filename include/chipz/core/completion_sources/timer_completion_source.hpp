@@ -5,10 +5,11 @@
 #ifndef CHIPZ_COMPLETION_SOURCES_TIMER_COMPLETION_SOURCE_HPP
 #define CHIPZ_COMPLETION_SOURCES_TIMER_COMPLETION_SOURCE_HPP
 
-#include "../timer_interface.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+
+#include "../timer_interface.hpp"
 
 namespace chipz {
 namespace CompletionSource {
@@ -30,28 +31,33 @@ namespace CompletionSource {
  * @endcode
  */
 class Timer {
-public:
-    explicit Timer(TimerInterface& timer) : timer_(timer) {}
+    public:
+    explicit Timer(TimerInterface& timer) : timer_(timer)
+    {
+    }
 
-    void arm(uint32_t duration_us, std::function<void()> on_complete) {
+    void arm(uint32_t duration_us, std::function<void()> on_complete)
+    {
         if (duration_us == 0) {
             on_complete();
             return;
         }
         timer_.setElapsedCallback(std::move(on_complete));
-        uint64_t ticks = static_cast<uint64_t>(duration_us)
-                         * static_cast<uint64_t>(timer_.getTickFrequencyHz())
-                         / 1000000u;
+        uint64_t ticks =
+            static_cast<uint64_t>(duration_us) * static_cast<uint64_t>(timer_.getTickFrequencyHz()) / 1000000u;
         timer_.schedule(std::max(uint64_t(1), ticks));
     }
 
-    void cancel() { timer_.cancel(); }
+    void cancel()
+    {
+        timer_.cancel();
+    }
 
-private:
+    private:
     TimerInterface& timer_;
 };
 
-} // namespace CompletionSource
-} // namespace chipz
+}  // namespace CompletionSource
+}  // namespace chipz
 
-#endif // CHIPZ_COMPLETION_SOURCES_TIMER_COMPLETION_SOURCE_HPP
+#endif  // CHIPZ_COMPLETION_SOURCES_TIMER_COMPLETION_SOURCE_HPP

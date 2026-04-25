@@ -31,72 +31,80 @@ namespace devices {
  * Uses std::tm for compatibility with DS3231 interface.
  */
 class MCP795W : public Chip<interfaces::SPIInterface> {
-public:
+    public:
     /**
      * @brief Construct MCP795W driver with communication interface
      * @param comm Reference to communication interface (SPI)
      * @param get_spi_transmission_disabled Function to check if SPI transmission is disabled
      */
-    MCP795W(interfaces::SPIInterface& comm,
-            std::function<uint8_t()> get_spi_transmission_disabled = nullptr)
-        : Chip<interfaces::SPIInterface>(comm)
-        , status_(Status::Uninitialized)
-        , current_time_{}
-        , alarm_time_{}
-        , clock_started_(false)
-        , date_reset_request_(false)
-        , set_alarm_request_(false)
-        , disable_request_(false)
-        , shutdown_allowed_(false)
-        , last_transfer_ok_(false)
-        , get_spi_transmission_disabled_(get_spi_transmission_disabled)
+    MCP795W(interfaces::SPIInterface& comm, std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
+        Chip<interfaces::SPIInterface>(comm),
+        status_(Status::Uninitialized),
+        current_time_{},
+        alarm_time_{},
+        clock_started_(false),
+        date_reset_request_(false),
+        set_alarm_request_(false),
+        disable_request_(false),
+        shutdown_allowed_(false),
+        last_transfer_ok_(false),
+        get_spi_transmission_disabled_(get_spi_transmission_disabled)
     {
     }
 
     // Chip interface implementation
-    bool initialize() override {
+    bool initialize() override
+    {
         if (!get<interfaces::SPIInterface>().isReady()) {
             status_ = Status::Error;
             return false;
         }
 
         // Reset state
-        shutdown_allowed_  = false;
-        disable_request_   = false;
-        clock_started_     = false;
+        shutdown_allowed_   = false;
+        disable_request_    = false;
+        clock_started_      = false;
         date_reset_request_ = false;
-        set_alarm_request_ = false;
-        last_transfer_ok_  = false;
+        set_alarm_request_  = false;
+        last_transfer_ok_   = false;
 
         // Initialize default time (10:10)
-        current_time_ = {};
+        current_time_         = {};
         current_time_.tm_hour = 10;
-        current_time_.tm_min = 10;
+        current_time_.tm_min  = 10;
 
         status_ = Status::Ready;
         return true;
     }
 
-    bool reset() override {
+    bool reset() override
+    {
         status_ = Status::Uninitialized;
         return initialize();
     }
 
-    bool isReady() const override {
+    bool isReady() const override
+    {
         return status_ == Status::Ready && get<interfaces::SPIInterface>().isReady() && clock_started_;
     }
 
-    Status getStatus() const override {
+    Status getStatus() const override
+    {
         return status_;
     }
 
-    std::string getDeviceId() const override {
+    std::string getDeviceId() const override
+    {
         return "MCP795W RTC";
     }
 
-    bool main() override { return true; }
+    bool main() override
+    {
+        return true;
+    }
 
-    DriverTask run() override {
+    DriverTask run() override
+    {
         while (true) {
             if (status_ != Status::Ready) {
                 co_yield WaitCondition::demand();
@@ -111,24 +119,39 @@ public:
                     set_alarm_request_ = false;
                     buildAlarm();
                     co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
-                    if (!last_transfer_ok_) { status_ = Status::Error; continue; }
-                    if (!clock_started_) clock_started_ = true;
+                    if (!last_transfer_ok_) {
+                        status_ = Status::Error;
+                        continue;
+                    }
+                    if (!clock_started_) {
+                        clock_started_ = true;
+                    }
                     continue;
                 }
                 if (date_reset_request_) {
                     date_reset_request_ = false;
                     updateTimekeep();
                     co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
-                    if (!last_transfer_ok_) { status_ = Status::Error; continue; }
-                    if (!clock_started_) clock_started_ = true;
+                    if (!last_transfer_ok_) {
+                        status_ = Status::Error;
+                        continue;
+                    }
+                    if (!clock_started_) {
+                        clock_started_ = true;
+                    }
                     continue;
                 }
             }
             shutdown_allowed_ = disable_request_ && !set_alarm_request_ && !date_reset_request_;
             requestCurrentTimeTransmission();
             co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
-            if (!last_transfer_ok_) { status_ = Status::Error; continue; }
-            if (!clock_started_) clock_started_ = true;
+            if (!last_transfer_ok_) {
+                status_ = Status::Error;
+                continue;
+            }
+            if (!clock_started_) {
+                clock_started_ = true;
+            }
             decodeTimekeep();
         }
     }
@@ -139,16 +162,18 @@ public:
      * @brief Set the current date and time
      * @param time Standard C time structure
      */
-    void setTime(const std::tm& time) {
+    void setTime(const std::tm& time)
+    {
         date_reset_request_ = true;
-        current_time_ = time;
+        current_time_       = time;
     }
 
     /**
      * @brief Get the current cached time
      * @return Pointer to current time structure
      */
-    const std::tm* getTime() const {
+    const std::tm* getTime() const
+    {
         return &current_time_;
     }
 
@@ -156,7 +181,8 @@ public:
      * @brief Get current time by copying to provided structure
      * @param time Reference to time structure to fill
      */
-    void getTime(std::tm& time) const {
+    void getTime(std::tm& time) const
+    {
         time = current_time_;
     }
 
@@ -164,15 +190,17 @@ public:
      * @brief Set alarm time
      * @param time Alarm time structure
      */
-    void setAlarm(const std::tm& time) {
+    void setAlarm(const std::tm& time)
+    {
         set_alarm_request_ = true;
-        alarm_time_ = time;
+        alarm_time_        = time;
     }
 
     /**
      * @brief Request alarm to be set
      */
-    void requestAlarmSet() {
+    void requestAlarmSet()
+    {
         set_alarm_request_ = true;
     }
 
@@ -180,7 +208,8 @@ public:
      * @brief Check if clock is ready (started)
      * @return true if clock has been initialized and started
      */
-    bool getReady() const {
+    bool getReady() const
+    {
         return clock_started_;
     }
 
@@ -188,7 +217,8 @@ public:
      * @brief Check if shutdown is allowed
      * @return true if safe to shut down
      */
-    bool getShutdownReady() const {
+    bool getShutdownReady() const
+    {
         return shutdown_allowed_;
     }
 
@@ -196,7 +226,8 @@ public:
      * @brief Request stop/disable
      * @param request true to request stop, false to continue
      */
-    void requestStop(bool request) {
+    void requestStop(bool request)
+    {
         disable_request_ = request;
     }
 
@@ -204,73 +235,72 @@ public:
      * @brief Get formatted time string
      * @return Formatted time string (YYYY/MM/DD HH:MM:SS)
      */
-    std::string getTimeString() const {
+    std::string getTimeString() const
+    {
         char buffer[32];
-        snprintf(buffer, sizeof(buffer), "%04d/%02d/%02d %02d:%02d:%02d",
-                current_time_.tm_year + 1900,
-                current_time_.tm_mon + 1,
-                current_time_.tm_mday,
-                current_time_.tm_hour,
-                current_time_.tm_min,
-                current_time_.tm_sec);
+        snprintf(buffer, sizeof(buffer), "%04d/%02d/%02d %02d:%02d:%02d", current_time_.tm_year + 1900,
+                 current_time_.tm_mon + 1, current_time_.tm_mday, current_time_.tm_hour, current_time_.tm_min,
+                 current_time_.tm_sec);
         return std::string(buffer);
     }
 
-private:
+    private:
     Status status_;
 
     std::tm current_time_;
     std::tm alarm_time_;
 
-    bool  clock_started_;
-    bool  date_reset_request_;
-    bool  set_alarm_request_;
-    bool  disable_request_;
-    bool  shutdown_allowed_;
-    bool  last_transfer_ok_;
+    bool clock_started_;
+    bool date_reset_request_;
+    bool set_alarm_request_;
+    bool disable_request_;
+    bool shutdown_allowed_;
+    bool last_transfer_ok_;
 
     std::function<uint8_t()> get_spi_transmission_disabled_;
 
     static constexpr uint32_t kPollPeriodMs = 100;
 
     // MCP795W SPI Opcodes
-    static constexpr uint8_t OPCODE_EEREAD = 0x03;
+    static constexpr uint8_t OPCODE_EEREAD  = 0x03;
     static constexpr uint8_t OPCODE_EEWRITE = 0x02;
-    static constexpr uint8_t OPCODE_EEWRDI = 0x04;
-    static constexpr uint8_t OPCODE_EEWREN = 0x06;
-    static constexpr uint8_t OPCODE_SRREAD = 0x05;
+    static constexpr uint8_t OPCODE_EEWRDI  = 0x04;
+    static constexpr uint8_t OPCODE_EEWREN  = 0x06;
+    static constexpr uint8_t OPCODE_SRREAD  = 0x05;
     static constexpr uint8_t OPCODE_SRWRITE = 0x01;
-    static constexpr uint8_t OPCODE_READ = 0x13;
-    static constexpr uint8_t OPCODE_WRITE = 0x12;
-    static constexpr uint8_t OPCODE_UNLOCK = 0x14;
+    static constexpr uint8_t OPCODE_READ    = 0x13;
+    static constexpr uint8_t OPCODE_WRITE   = 0x12;
+    static constexpr uint8_t OPCODE_UNLOCK  = 0x14;
     static constexpr uint8_t OPCODE_IDWRITE = 0x32;
-    static constexpr uint8_t OPCODE_IDREAD = 0x33;
-    static constexpr uint8_t OPCODE_CLRWDT = 0x44;
-    static constexpr uint8_t OPCODE_CLRRAM = 0x54;
+    static constexpr uint8_t OPCODE_IDREAD  = 0x33;
+    static constexpr uint8_t OPCODE_CLRWDT  = 0x44;
+    static constexpr uint8_t OPCODE_CLRRAM  = 0x54;
 
     // MCP795W Register addresses
-    static constexpr uint8_t TIME_AND_DATE_START_ADDRESS = 0;
+    static constexpr uint8_t TIME_AND_DATE_START_ADDRESS       = 0;
     static constexpr uint8_t TIMEKEEP_SEND_TRANSMISSION_LENGTH = 11;
-    static constexpr uint8_t ALARM0_START_ADDRESS = 0x0C;
-    static constexpr uint8_t ALARM0_SEND_TRANSMISSION_LENGTH = 8;
+    static constexpr uint8_t ALARM0_START_ADDRESS              = 0x0C;
+    static constexpr uint8_t ALARM0_SEND_TRANSMISSION_LENGTH   = 8;
 
     // Alarm masks
     static constexpr uint8_t SECOND_ALARM_MASK = 0x00;
-    static constexpr uint8_t HOUR_ALARM_MASK = 0x02;
+    static constexpr uint8_t HOUR_ALARM_MASK   = 0x02;
     static constexpr uint8_t GLOBAL_ALARM_MASK = 0x07;
 
     /**
      * @brief SPI transfer completion callback
      * @param success True if transfer succeeded, false on error
      */
-    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
+    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override
+    {
         last_transfer_ok_ = success;
     }
 
     /**
      * @brief Update timekeep registers (write current time to RTC)
      */
-    void updateTimekeep() {
+    void updateTimekeep()
+    {
         uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_WRITE;
@@ -308,15 +338,15 @@ private:
 
         // Month register (BCD encoding, tm_mon is 0-11, RTC uses 1-12)
         uint8_t month = current_time_.tm_mon + 1;
-        tx_buffer[8] = month / 10;
-        tx_buffer[8] = ((tx_buffer[8] << 4) & 0x10);
+        tx_buffer[8]  = month / 10;
+        tx_buffer[8]  = ((tx_buffer[8] << 4) & 0x10);
         tx_buffer[8] |= ((month % 10) & 0x0F);
 
         // Year register (BCD encoding, tm_year is years since 1900)
         uint32_t year_temp = current_time_.tm_year + 1900;
-        year_temp = year_temp - 2000;
-        tx_buffer[9] = year_temp / 10;
-        tx_buffer[9] = ((tx_buffer[9] << 4) & 0xF0);
+        year_temp          = year_temp - 2000;
+        tx_buffer[9]       = year_temp / 10;
+        tx_buffer[9]       = ((tx_buffer[9] << 4) & 0xF0);
         tx_buffer[9] |= ((year_temp % 10) & 0x0F);
 
         // Control register - Enable ALARM 0
@@ -328,7 +358,8 @@ private:
     /**
      * @brief Request current time transmission (read from RTC)
      */
-    void requestCurrentTimeTransmission() {
+    void requestCurrentTimeTransmission()
+    {
         uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_READ;
@@ -340,7 +371,8 @@ private:
     /**
      * @brief Decode timekeep data from RX buffer
      */
-    void decodeTimekeep() {
+    void decodeTimekeep()
+    {
         const uint8_t* rx_buffer = get<interfaces::SPIInterface>().getRxBuffer();
 
         // Skip hundreds of seconds register (index 2)
@@ -379,7 +411,8 @@ private:
     /**
      * @brief Build alarm configuration and send to RTC
      */
-    void buildAlarm() {
+    void buildAlarm()
+    {
         uint8_t* tx_buffer = get<interfaces::SPIInterface>().getTxBuffer();
 
         tx_buffer[0] = OPCODE_WRITE;
@@ -420,15 +453,15 @@ private:
 
         // Month register (BCD encoding, tm_mon is 0-11, RTC uses 1-12)
         uint8_t month = alarm_time_.tm_mon + 1;
-        tx_buffer[7] = month / 10;
-        tx_buffer[7] = ((tx_buffer[7] << 4) & 0x10);
+        tx_buffer[7]  = month / 10;
+        tx_buffer[7]  = ((tx_buffer[7] << 4) & 0x10);
         tx_buffer[7] |= ((month % 10) & 0x0F);
 
         this->transmit<interfaces::SPIInterface>(tx_buffer, ALARM0_SEND_TRANSMISSION_LENGTH);
     }
 };
 
-} // namespace devices
-} // namespace chipz
+}  // namespace devices
+}  // namespace chipz
 
-#endif // CHIPZ_DEVICES_MCP795W_HPP
+#endif  // CHIPZ_DEVICES_MCP795W_HPP

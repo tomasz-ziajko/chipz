@@ -5,8 +5,8 @@
 #ifndef CHIPZ_NETWORK_CAN_INTERFACE_HPP
 #define CHIPZ_NETWORK_CAN_INTERFACE_HPP
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <tuple>
 
@@ -17,28 +17,54 @@ namespace network {
 // DLC helpers — free functions, used by CANMessage and port ISR code
 // -------------------------------------------------------------------------
 
-constexpr uint8_t dlcToLength(uint8_t d) {
-    if (d <= 8) return d;
+constexpr uint8_t dlcToLength(uint8_t d)
+{
+    if (d <= 8) {
+        return d;
+    }
     switch (d) {
-        case  9: return 12;
-        case 10: return 16;
-        case 11: return 20;
-        case 12: return 24;
-        case 13: return 32;
-        case 14: return 48;
-        case 15: return 64;
-        default: return 64;
+        case 9:
+            return 12;
+        case 10:
+            return 16;
+        case 11:
+            return 20;
+        case 12:
+            return 24;
+        case 13:
+            return 32;
+        case 14:
+            return 48;
+        case 15:
+            return 64;
+        default:
+            return 64;
     }
 }
 
-constexpr uint8_t lengthToDlc(uint8_t len) {
-    if (len <=  8) return len;
-    if (len <= 12) return 9;
-    if (len <= 16) return 10;
-    if (len <= 20) return 11;
-    if (len <= 24) return 12;
-    if (len <= 32) return 13;
-    if (len <= 48) return 14;
+constexpr uint8_t lengthToDlc(uint8_t len)
+{
+    if (len <= 8) {
+        return len;
+    }
+    if (len <= 12) {
+        return 9;
+    }
+    if (len <= 16) {
+        return 10;
+    }
+    if (len <= 20) {
+        return 11;
+    }
+    if (len <= 24) {
+        return 12;
+    }
+    if (len <= 32) {
+        return 13;
+    }
+    if (len <= 48) {
+        return 14;
+    }
     return 15;
 }
 
@@ -75,10 +101,9 @@ constexpr uint8_t lengthToDlc(uint8_t len) {
  *   g_can1.transmit(tx_msg);
  * @endcode
  */
-template<uint32_t ID, uint8_t Length,
-         bool ExtendedId = false, bool FdFormat = false, bool Brs = false>
+template <uint32_t ID, uint8_t Length, bool ExtendedId = false, bool FdFormat = false, bool Brs = false>
 class CANMessage {
-public:
+    public:
     static constexpr uint32_t kId         = ID;
     static constexpr uint8_t  kLength     = Length;
     static constexpr bool     kExtendedId = ExtendedId;
@@ -88,10 +113,19 @@ public:
 
     using Callback = std::function<void(const CANMessage&)>;
 
-    void setCallback(Callback cb) { callback_ = std::move(cb); }
+    void setCallback(Callback cb)
+    {
+        callback_ = std::move(cb);
+    }
 
-    uint8_t*       data()       { return data_; }
-    const uint8_t* data() const { return data_; }
+    uint8_t* data()
+    {
+        return data_;
+    }
+    const uint8_t* data() const
+    {
+        return data_;
+    }
 
     /**
      * @brief Called by CANInterface on ID match
@@ -99,13 +133,18 @@ public:
      * Copies up to Length bytes from src then fires the callback.
      * Excess bytes (length > Length) are silently ignored.
      */
-    void onReceived(const uint8_t* src, uint8_t length) {
+    void onReceived(const uint8_t* src, uint8_t length)
+    {
         uint8_t n = length < Length ? length : Length;
-        for (uint8_t i = 0; i < n; ++i) data_[i] = src[i];
-        if (callback_) callback_(*this);
+        for (uint8_t i = 0; i < n; ++i) {
+            data_[i] = src[i];
+        }
+        if (callback_) {
+            callback_(*this);
+        }
     }
 
-private:
+    private:
     uint8_t  data_[Length]{};
     Callback callback_;
 };
@@ -123,7 +162,7 @@ private:
  * FIFO happens in the ISR before calling notifyRxComplete().
  */
 class CANInterfaceBase {
-public:
+    public:
     virtual ~CANInterfaceBase() = default;
 
     /**
@@ -183,9 +222,9 @@ public:
  *   g_can1.message<EngineSpeed>().setCallback([](const EngineSpeed& m) { ... });
  * @endcode
  */
-template<size_t TxFifoDepth, typename... RxMessages>
+template <size_t TxFifoDepth, typename... RxMessages>
 class CANInterface : public CANInterfaceBase {
-public:
+    public:
     /**
      * @brief HAL transmit function
      *
@@ -194,12 +233,12 @@ public:
      *
      * @return 0 on success, non-zero HAL error code otherwise
      */
-    using TxFunction = std::function<int(uint32_t id, bool extended_id, bool fd_format,
-                                         bool brs, const uint8_t* data, uint8_t length)>;
+    using TxFunction = std::function<int(uint32_t id, bool extended_id, bool fd_format, bool brs, const uint8_t* data,
+                                         uint8_t length)>;
 
-    explicit CANInterface(TxFunction tx_func)
-        : tx_func_(std::move(tx_func))
-    {}
+    explicit CANInterface(TxFunction tx_func) : tx_func_(std::move(tx_func))
+    {
+    }
 
     CANInterface(const CANInterface&)            = delete;
     CANInterface& operator=(const CANInterface&) = delete;
@@ -214,9 +253,12 @@ public:
      * Frame attributes (ID, flags, length) are extracted from the message
      * type's compile-time constants. Returns false if the TX FIFO is full.
      */
-    template<uint32_t ID, uint8_t Length, bool Ext, bool Fd, bool B>
-    bool transmit(const CANMessage<ID, Length, Ext, Fd, B>& msg) {
-        if (isTxFifoFull() || !tx_func_) return false;
+    template <uint32_t ID, uint8_t Length, bool Ext, bool Fd, bool B>
+    bool transmit(const CANMessage<ID, Length, Ext, Fd, B>& msg)
+    {
+        if (isTxFifoFull() || !tx_func_) {
+            return false;
+        }
         ++tx_pending_;
         if (tx_func_(ID, Ext, Fd, B, msg.data(), Length) != 0) {
             --tx_pending_;
@@ -234,19 +276,32 @@ public:
      *
      * @tparam Msg Must be one of the RxMessages types passed to CANInterface
      */
-    template<typename Msg>
-    Msg& message() { return std::get<Msg>(messages_); }
+    template <typename Msg>
+    Msg& message()
+    {
+        return std::get<Msg>(messages_);
+    }
 
-    template<typename Msg>
-    const Msg& message() const { return std::get<Msg>(messages_); }
+    template <typename Msg>
+    const Msg& message() const
+    {
+        return std::get<Msg>(messages_);
+    }
 
     // -------------------------------------------------------------------------
     // TX FIFO state
     // -------------------------------------------------------------------------
 
-    bool   isTxFifoFull()    const { return tx_pending_ >= TxFifoDepth; }
-    bool   isTxFifoEmpty()   const { return tx_pending_ == 0; }
-    size_t txFifoFreeSlots() const {
+    bool isTxFifoFull() const
+    {
+        return tx_pending_ >= TxFifoDepth;
+    }
+    bool isTxFifoEmpty() const
+    {
+        return tx_pending_ == 0;
+    }
+    size_t txFifoFreeSlots() const
+    {
         return tx_pending_ < TxFifoDepth ? TxFifoDepth - tx_pending_ : 0u;
     }
 
@@ -254,24 +309,31 @@ public:
     // CANInterfaceBase overrides — called from ISR context
     // -------------------------------------------------------------------------
 
-    void notifyTxComplete() override {
-        if (tx_pending_ > 0) --tx_pending_;
+    void notifyTxComplete() override
+    {
+        if (tx_pending_ > 0) {
+            --tx_pending_;
+        }
     }
 
-    void notifyRxComplete(uint32_t id, const uint8_t* data, uint8_t length) override {
+    void notifyRxComplete(uint32_t id, const uint8_t* data, uint8_t length) override
+    {
         // Short-circuit fold: stops at the first matching message type
         (dispatchSingle<RxMessages>(id, data, length) || ...);
     }
 
-    void notifyError() override {}
+    void notifyError() override
+    {
+    }
 
-private:
+    private:
     std::tuple<RxMessages...> messages_;
     TxFunction                tx_func_;
     size_t                    tx_pending_{0};
 
-    template<typename Msg>
-    bool dispatchSingle(uint32_t id, const uint8_t* data, uint8_t length) {
+    template <typename Msg>
+    bool dispatchSingle(uint32_t id, const uint8_t* data, uint8_t length)
+    {
         if (Msg::kId == id) {
             std::get<Msg>(messages_).onReceived(data, length);
             return true;
@@ -280,7 +342,7 @@ private:
     }
 };
 
-} // namespace network
-} // namespace chipz
+}  // namespace network
+}  // namespace chipz
 
-#endif // CHIPZ_NETWORK_CAN_INTERFACE_HPP
+#endif  // CHIPZ_NETWORK_CAN_INTERFACE_HPP

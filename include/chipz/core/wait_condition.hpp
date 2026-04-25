@@ -18,7 +18,7 @@ class CommunicationInterface;
  * ticks) on receipt — drivers never construct Deadline directly.
  */
 class WaitCondition {
-public:
+    public:
     enum class Type {
         Immediate,  ///< call run() next service() cycle
         DelayMs,    ///< call run() after N ms   — Core converts to Deadline
@@ -29,50 +29,81 @@ public:
         Demand      ///< call run() only when Core::wake() is invoked
     };
 
-    static WaitCondition immediate() { return WaitCondition{Type::Immediate}; }
+    static WaitCondition immediate()
+    {
+        return WaitCondition{Type::Immediate};
+    }
 
-    static WaitCondition delayMs(uint32_t ms) {
+    static WaitCondition delayMs(uint32_t ms)
+    {
         WaitCondition w{Type::DelayMs};
         w.p_.ms = ms;
         return w;
     }
 
-    static WaitCondition delayUs(uint32_t us) {
+    static WaitCondition delayUs(uint32_t us)
+    {
         WaitCondition w{Type::DelayUs};
         w.p_.us = us;
         return w;
     }
 
     // Internal — Core only.
-    static WaitCondition deadline(uint64_t absolute_ticks) {
+    static WaitCondition deadline(uint64_t absolute_ticks)
+    {
         WaitCondition w{Type::Deadline};
         w.p_.ticks = absolute_ticks;
         return w;
     }
 
-    static WaitCondition comm(CommunicationInterface& c) {
+    static WaitCondition comm(CommunicationInterface& c)
+    {
         WaitCondition w{Type::Comm};
         w.p_.comm = &c;
         return w;
     }
 
-    static WaitCondition irq(int16_t irqn) {
+    static WaitCondition irq(int16_t irqn)
+    {
         WaitCondition w{Type::IRQ};
         w.p_.irqn = irqn;
         return w;
     }
 
-    static WaitCondition demand() { return WaitCondition{Type::Demand}; }
+    static WaitCondition demand()
+    {
+        return WaitCondition{Type::Demand};
+    }
 
-    Type                    type()          const { return type_;   }
-    uint32_t                ms()            const { return p_.ms;   }
-    uint32_t                us()            const { return p_.us;   }
-    uint64_t                ticks()         const { return p_.ticks; }
-    CommunicationInterface* commInterface() const { return p_.comm; }
-    int16_t                 irqn()          const { return p_.irqn; }
+    Type type() const
+    {
+        return type_;
+    }
+    uint32_t ms() const
+    {
+        return p_.ms;
+    }
+    uint32_t us() const
+    {
+        return p_.us;
+    }
+    uint64_t ticks() const
+    {
+        return p_.ticks;
+    }
+    CommunicationInterface* commInterface() const
+    {
+        return p_.comm;
+    }
+    int16_t irqn() const
+    {
+        return p_.irqn;
+    }
 
-private:
-    explicit WaitCondition(Type t) : type_(t), p_{} {}
+    private:
+    explicit WaitCondition(Type t) : type_(t), p_{}
+    {
+    }
 
     Type type_;
 
@@ -82,10 +113,12 @@ private:
         uint64_t                ticks;  // largest member — zero-inits the union
         CommunicationInterface* comm;
         int16_t                 irqn;
-        Payload() : ticks(0) {}
+        Payload() : ticks(0)
+        {
+        }
     } p_;
 };
 
-} // namespace chipz
+}  // namespace chipz
 
-#endif // CHIPZ_WAIT_CONDITION_HPP
+#endif  // CHIPZ_WAIT_CONDITION_HPP

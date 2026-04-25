@@ -24,90 +24,119 @@ namespace devices {
  *   Loop: receive (retry immediate if bus busy) → co_yield comm → deserialize → co_yield delayMs.
  */
 class MAX6675 : public Chip<interfaces::SPIInterface> {
-public:
-    explicit MAX6675(interfaces::SPIInterface& comm)
-        : Chip<interfaces::SPIInterface>(comm)
-        , status_(Status::Uninitialized)
-        , temperature_(0)
-        , connection_open_(false)
-        , last_transfer_ok_(false)
-    {}
+    public:
+    explicit MAX6675(interfaces::SPIInterface& comm) :
+        Chip<interfaces::SPIInterface>(comm),
+        status_(Status::Uninitialized),
+        temperature_(0),
+        connection_open_(false),
+        last_transfer_ok_(false)
+    {
+    }
 
-    bool initialize() override {
+    bool initialize() override
+    {
         if (!get<interfaces::SPIInterface>().isReady()) {
             status_ = Status::Error;
             return false;
         }
-        temperature_     = 0;
-        connection_open_ = false;
+        temperature_      = 0;
+        connection_open_  = false;
         last_transfer_ok_ = false;
-        status_          = Status::Ready;
+        status_           = Status::Ready;
         return true;
     }
 
-    bool reset() override {
+    bool reset() override
+    {
         status_ = Status::Uninitialized;
         return initialize();
     }
 
-    bool isReady() const override {
+    bool isReady() const override
+    {
         return status_ == Status::Ready && get<interfaces::SPIInterface>().isReady();
     }
 
-    Status getStatus() const override { return status_; }
+    Status getStatus() const override
+    {
+        return status_;
+    }
 
-    std::string getDeviceId() const override { return "MAX6675"; }
+    std::string getDeviceId() const override
+    {
+        return "MAX6675";
+    }
 
-    bool main() override { return true; }
+    bool main() override
+    {
+        return true;
+    }
 
-    DriverTask run() override {
+    DriverTask run() override
+    {
         while (true) {
             if (status_ != Status::Ready) {
                 co_yield WaitCondition::demand();
                 continue;
             }
-            if (!receive<interfaces::SPIInterface>(
-                    get<interfaces::SPIInterface>().getRxBuffer(), kTransferLength)) {
+            if (!receive<interfaces::SPIInterface>(get<interfaces::SPIInterface>().getRxBuffer(), kTransferLength)) {
                 co_yield WaitCondition::immediate();
                 continue;
             }
             co_yield WaitCondition::comm(get<interfaces::SPIInterface>());
-            if (last_transfer_ok_) deserialize();
+            if (last_transfer_ok_) {
+                deserialize();
+            }
             co_yield WaitCondition::delayMs(kReadPeriodMs);
         }
     }
 
-    uint32_t getTemperature()       const { return temperature_; }
-    float    getTemperatureCelsius()    const { return static_cast<float>(temperature_) * kResolution; }
-    float    getTemperatureFahrenheit() const { return getTemperatureCelsius() * 9.0f / 5.0f + 32.0f; }
-    bool     isThermocoupleConnected()  const { return !connection_open_; }
+    uint32_t getTemperature() const
+    {
+        return temperature_;
+    }
+    float getTemperatureCelsius() const
+    {
+        return static_cast<float>(temperature_) * kResolution;
+    }
+    float getTemperatureFahrenheit() const
+    {
+        return getTemperatureCelsius() * 9.0f / 5.0f + 32.0f;
+    }
+    bool isThermocoupleConnected() const
+    {
+        return !connection_open_;
+    }
 
-private:
+    private:
     Status   status_;
     uint32_t temperature_;
     bool     connection_open_;
     bool     last_transfer_ok_;
 
-    static constexpr float    kResolution   = 0.25f;
+    static constexpr float    kResolution     = 0.25f;
     static constexpr uint16_t kTransferLength = 2;
-    static constexpr uint32_t kReadPeriodMs  = 1000;
+    static constexpr uint32_t kReadPeriodMs   = 1000;
 
-    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override {
+    void onTransferComplete(CommunicationInterface& /*which*/, bool success) override
+    {
         last_transfer_ok_ = success;
     }
 
-    void deserialize() {
+    void deserialize()
+    {
         const uint8_t* rx = get<interfaces::SPIInterface>().getRxBuffer();
 
         // Bits 14:3 hold the 12-bit temperature (MSB first, each LSB = 0.25°C)
         uint32_t raw = (static_cast<uint32_t>(rx[0]) << 8) | rx[1];
-        temperature_    = (raw >> 3) & 0x0FFFu;
+        temperature_ = (raw >> 3) & 0x0FFFu;
 
         connection_open_ = (rx[1] & 0x04) != 0;
     }
 };
 
-} // namespace devices
-} // namespace chipz
+}  // namespace devices
+}  // namespace chipz
 
-#endif // CHIPZ_DEVICES_MAX6675_HPP
+#endif  // CHIPZ_DEVICES_MAX6675_HPP

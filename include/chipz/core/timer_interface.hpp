@@ -21,7 +21,7 @@ namespace chipz {
  * The callback only sets a pending flag — no driver code runs in interrupt context.
  */
 class TimerInterface {
-public:
+    public:
     virtual ~TimerInterface() = default;
 
     /**
@@ -55,14 +55,15 @@ public:
      *
      * @param cb Callback to invoke on timer elapsed
      */
-    void setElapsedCallback(std::function<void()> cb) {
+    void setElapsedCallback(std::function<void()> cb)
+    {
         on_elapsed_ = std::move(cb);
     }
 
-protected:
+    protected:
     std::function<void()> on_elapsed_;
 };
 
-} // namespace chipz
+}  // namespace chipz
 
-#endif // CHIPZ_TIMER_INTERFACE_HPP
+#endif  // CHIPZ_TIMER_INTERFACE_HPP

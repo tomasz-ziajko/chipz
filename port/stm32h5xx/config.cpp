@@ -85,7 +85,6 @@ __attribute__((weak)) extern UART_HandleTypeDef huart4;
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan1;
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
 #endif
-
 }
 
 // ---------------------------------------------------------------------------
@@ -96,61 +95,41 @@ __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
 
 chipz::interfaces::I2CInterface g_i2c1{
     [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Read_IT(&hi2c1,
-                                   static_cast<uint16_t>(dev) << 1,
-                                   reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+        return HAL_I2C_Mem_Read_IT(&hi2c1, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
     },
     [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Write_IT(&hi2c1,
-                                    static_cast<uint16_t>(dev) << 1,
-                                    reg, I2C_MEMADD_SIZE_8BIT,
+        return HAL_I2C_Mem_Write_IT(&hi2c1, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
                                     const_cast<uint8_t*>(buf), len);
-    }
-};
+    }};
 
 chipz::interfaces::I2CInterface g_i2c2{
     [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Read_IT(&hi2c2,
-                                   static_cast<uint16_t>(dev) << 1,
-                                   reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+        return HAL_I2C_Mem_Read_IT(&hi2c2, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
     },
     [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Write_IT(&hi2c2,
-                                    static_cast<uint16_t>(dev) << 1,
-                                    reg, I2C_MEMADD_SIZE_8BIT,
+        return HAL_I2C_Mem_Write_IT(&hi2c2, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
                                     const_cast<uint8_t*>(buf), len);
-    }
-};
+    }};
 
 chipz::interfaces::I2CInterface g_i2c3{
     [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Read_IT(&hi2c3,
-                                   static_cast<uint16_t>(dev) << 1,
-                                   reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+        return HAL_I2C_Mem_Read_IT(&hi2c3, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
     },
     [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Write_IT(&hi2c3,
-                                    static_cast<uint16_t>(dev) << 1,
-                                    reg, I2C_MEMADD_SIZE_8BIT,
+        return HAL_I2C_Mem_Write_IT(&hi2c3, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
                                     const_cast<uint8_t*>(buf), len);
-    }
-};
+    }};
 
 chipz::interfaces::I2CInterface g_i2c4{
     [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Read_IT(&hi2c4,
-                                   static_cast<uint16_t>(dev) << 1,
-                                   reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+        return HAL_I2C_Mem_Read_IT(&hi2c4, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
     },
     [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Write_IT(&hi2c4,
-                                    static_cast<uint16_t>(dev) << 1,
-                                    reg, I2C_MEMADD_SIZE_8BIT,
+        return HAL_I2C_Mem_Write_IT(&hi2c4, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
                                     const_cast<uint8_t*>(buf), len);
-    }
-};
+    }};
 
-#endif // HAL_I2C_MODULE_ENABLED
+#endif  // HAL_I2C_MODULE_ENABLED
 
 // ---------------------------------------------------------------------------
 // SPI bus interfaces (no chip select — see file header)
@@ -159,30 +138,18 @@ chipz::interfaces::I2CInterface g_i2c4{
 #ifdef HAL_SPI_MODULE_ENABLED
 
 chipz::interfaces::SPIInterface g_spi1{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
-        return HAL_SPI_TransmitReceive_IT(&hspi1, tx, rx, len);
-    }
-};
+    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi1, tx, rx, len); }};
 
 chipz::interfaces::SPIInterface g_spi2{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
-        return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len);
-    }
-};
+    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len); }};
 
 chipz::interfaces::SPIInterface g_spi3{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
-        return HAL_SPI_TransmitReceive_IT(&hspi3, tx, rx, len);
-    }
-};
+    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi3, tx, rx, len); }};
 
 chipz::interfaces::SPIInterface g_spi4{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
-        return HAL_SPI_TransmitReceive_IT(&hspi4, tx, rx, len);
-    }
-};
+    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi4, tx, rx, len); }};
 
-#endif // HAL_SPI_MODULE_ENABLED
+#endif  // HAL_SPI_MODULE_ENABLED
 
 // ---------------------------------------------------------------------------
 // UART interfaces
@@ -191,42 +158,22 @@ chipz::interfaces::SPIInterface g_spi4{
 #ifdef HAL_UART_MODULE_ENABLED
 
 chipz::interfaces::UARTInterface g_uart1{
-    [](const uint8_t* data, uint16_t len) -> int {
-        return HAL_UART_Transmit_IT(&huart1, data, len);
-    },
-    [](uint8_t* buf, uint16_t len) -> int {
-        return HAL_UART_Receive_IT(&huart1, buf, len);
-    }
-};
+    [](const uint8_t* data, uint16_t len) -> int { return HAL_UART_Transmit_IT(&huart1, data, len); },
+    [](uint8_t* buf, uint16_t len) -> int { return HAL_UART_Receive_IT(&huart1, buf, len); }};
 
 chipz::interfaces::UARTInterface g_uart2{
-    [](const uint8_t* data, uint16_t len) -> int {
-        return HAL_UART_Transmit_IT(&huart2, data, len);
-    },
-    [](uint8_t* buf, uint16_t len) -> int {
-        return HAL_UART_Receive_IT(&huart2, buf, len);
-    }
-};
+    [](const uint8_t* data, uint16_t len) -> int { return HAL_UART_Transmit_IT(&huart2, data, len); },
+    [](uint8_t* buf, uint16_t len) -> int { return HAL_UART_Receive_IT(&huart2, buf, len); }};
 
 chipz::interfaces::UARTInterface g_uart3{
-    [](const uint8_t* data, uint16_t len) -> int {
-        return HAL_UART_Transmit_IT(&huart3, data, len);
-    },
-    [](uint8_t* buf, uint16_t len) -> int {
-        return HAL_UART_Receive_IT(&huart3, buf, len);
-    }
-};
+    [](const uint8_t* data, uint16_t len) -> int { return HAL_UART_Transmit_IT(&huart3, data, len); },
+    [](uint8_t* buf, uint16_t len) -> int { return HAL_UART_Receive_IT(&huart3, buf, len); }};
 
 chipz::interfaces::UARTInterface g_uart4{
-    [](const uint8_t* data, uint16_t len) -> int {
-        return HAL_UART_Transmit_IT(&huart4, data, len);
-    },
-    [](uint8_t* buf, uint16_t len) -> int {
-        return HAL_UART_Receive_IT(&huart4, buf, len);
-    }
-};
+    [](const uint8_t* data, uint16_t len) -> int { return HAL_UART_Transmit_IT(&huart4, data, len); },
+    [](uint8_t* buf, uint16_t len) -> int { return HAL_UART_Receive_IT(&huart4, buf, len); }};
 
-#endif // HAL_UART_MODULE_ENABLED
+#endif  // HAL_UART_MODULE_ENABLED
 
 // ---------------------------------------------------------------------------
 // FDCAN interfaces
@@ -248,16 +195,17 @@ chipz::interfaces::UARTInterface g_uart4{
 
 #ifdef HAL_FDCAN_MODULE_ENABLED
 
-static int fdcan_tx(FDCAN_HandleTypeDef* h, uint32_t id, bool extended_id,
-                    bool fd_format, bool brs, const uint8_t* data, uint8_t length) {
+static int fdcan_tx(FDCAN_HandleTypeDef* h, uint32_t id, bool extended_id, bool fd_format, bool brs,
+                    const uint8_t* data, uint8_t length)
+{
     FDCAN_TxHeaderTypeDef hdr{};
     hdr.Identifier          = id;
     hdr.IdType              = extended_id ? FDCAN_EXTENDED_ID : FDCAN_STANDARD_ID;
     hdr.TxFrameType         = FDCAN_DATA_FRAME;
     hdr.DataLength          = static_cast<uint32_t>(chipz::network::lengthToDlc(length)) << 16U;
     hdr.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    hdr.BitRateSwitch       = brs       ? FDCAN_BRS_ON  : FDCAN_BRS_OFF;
-    hdr.FDFormat            = fd_format ? FDCAN_FD_CAN  : FDCAN_CLASSIC_CAN;
+    hdr.BitRateSwitch       = brs ? FDCAN_BRS_ON : FDCAN_BRS_OFF;
+    hdr.FDFormat            = fd_format ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN;
     hdr.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
     hdr.MessageMarker       = 0;
     return HAL_FDCAN_AddMessageToTxFifoQ(h, &hdr, const_cast<uint8_t*>(data));
@@ -267,20 +215,15 @@ static int fdcan_tx(FDCAN_HandleTypeDef* h, uint32_t id, bool extended_id,
 using AppCANInterface1 = chipz::network::CANInterface<3>;
 using AppCANInterface2 = chipz::network::CANInterface<3>;
 
-static AppCANInterface1 s_can1{
-    [](uint32_t id, bool ext, bool fd, bool brs, const uint8_t* data, uint8_t len) -> int {
-        return fdcan_tx(&hfdcan1, id, ext, fd, brs, data, len);
-    }
-};
+static AppCANInterface1 s_can1{[](uint32_t id, bool ext, bool fd, bool brs, const uint8_t* data, uint8_t len) -> int {
+    return fdcan_tx(&hfdcan1, id, ext, fd, brs, data, len);
+}};
 
-static AppCANInterface2 s_can2{
-    [](uint32_t id, bool ext, bool fd, bool brs, const uint8_t* data, uint8_t len) -> int {
-        return fdcan_tx(&hfdcan2, id, ext, fd, brs, data, len);
-    }
-};
+static AppCANInterface2 s_can2{[](uint32_t id, bool ext, bool fd, bool brs, const uint8_t* data, uint8_t len) -> int {
+    return fdcan_tx(&hfdcan2, id, ext, fd, brs, data, len);
+}};
 
 chipz::network::CANInterfaceBase* g_can1 = &s_can1;
 chipz::network::CANInterfaceBase* g_can2 = &s_can2;
 
-#endif // HAL_FDCAN_MODULE_ENABLED
-
+#endif  // HAL_FDCAN_MODULE_ENABLED

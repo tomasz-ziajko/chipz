@@ -5,11 +5,12 @@
 #ifndef CHIPZ_INTERFACES_I2C_INTERFACE_HPP
 #define CHIPZ_INTERFACES_I2C_INTERFACE_HPP
 
-#include "../core/communication_interface.hpp"
-#include <cstdint>
-#include <cstddef>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
+
+#include "../core/communication_interface.hpp"
 
 namespace chipz {
 namespace interfaces {
@@ -24,7 +25,7 @@ namespace interfaces {
  * Arduino Wire, or custom I2C implementations.
  */
 class I2CInterface : public CommunicationInterface {
-public:
+    public:
     /**
      * @brief Function pointer type for I2C memory read operation
      * @param device_address I2C device address (7-bit or 8-bit)
@@ -33,8 +34,8 @@ public:
      * @param size Number of bytes to read
      * @return 0 on success, error code otherwise
      */
-    using I2CReadFunction = std::function<int(uint8_t device_address, uint8_t mem_address,
-                                              uint8_t* data, uint16_t size)>;
+    using I2CReadFunction =
+        std::function<int(uint8_t device_address, uint8_t mem_address, uint8_t* data, uint16_t size)>;
 
     /**
      * @brief Function pointer type for I2C memory write operation
@@ -44,8 +45,8 @@ public:
      * @param size Number of bytes to write
      * @return 0 on success, error code otherwise
      */
-    using I2CWriteFunction = std::function<int(uint8_t device_address, uint8_t mem_address,
-                                               const uint8_t* data, uint16_t size)>;
+    using I2CWriteFunction =
+        std::function<int(uint8_t device_address, uint8_t mem_address, const uint8_t* data, uint16_t size)>;
 
     /**
      * @brief Construct a bus-level I2C interface
@@ -56,14 +57,14 @@ public:
      * the bus, not a specific device. Drivers call setDeviceAddress() before
      * each transfer to select their device on the shared bus.
      */
-    I2CInterface(I2CReadFunction read_func,
-                 I2CWriteFunction write_func)
-        : CommunicationInterface()
-        , device_address_(0)
-        , i2c_read_(read_func)
-        , i2c_write_(write_func)
-        , current_mem_address_(0)
-    {}
+    I2CInterface(I2CReadFunction read_func, I2CWriteFunction write_func) :
+        CommunicationInterface(),
+        device_address_(0),
+        i2c_read_(read_func),
+        i2c_write_(write_func),
+        current_mem_address_(0)
+    {
+    }
 
     /**
      * @brief Set the target device address for the next transfer
@@ -74,7 +75,10 @@ public:
      *
      * @param address 7-bit I2C device address
      */
-    void setDeviceAddress(uint8_t address) { device_address_ = address; }
+    void setDeviceAddress(uint8_t address)
+    {
+        device_address_ = address;
+    }
 
     /**
      * @brief Register a device on this I2C bus
@@ -86,13 +90,15 @@ public:
      * @param device_address 7-bit I2C device address
      * @return ConnectionId to pass to Chip::setConnection()
      */
-    ConnectionId registerConnection(uint8_t device_address) {
+    ConnectionId registerConnection(uint8_t device_address)
+    {
         ConnectionId id = nextId();
         connections_.push_back(device_address);
         return id;
     }
 
-    void selectConnection(ConnectionId id) override {
+    void selectConnection(ConnectionId id) override
+    {
         // TODO: handle invalid / out-of-range id
         device_address_ = connections_[id];
     }
@@ -103,7 +109,8 @@ public:
      * @param length Number of bytes to transmit
      * @return true if transmission started successfully, false otherwise
      */
-    bool transmit(const uint8_t* data, size_t length) override {
+    bool transmit(const uint8_t* data, size_t length) override
+    {
         if (transfer_in_progress_ || !i2c_write_) {
             return false;
         }
@@ -119,8 +126,8 @@ public:
         transfer_in_progress_ = true;
 
         // Start async I2C write — completion notified via ISR callback
-        int result = i2c_write_(device_address_, current_mem_address_,
-                                tx_buffer_.data(), static_cast<uint16_t>(length));
+        int result =
+            i2c_write_(device_address_, current_mem_address_, tx_buffer_.data(), static_cast<uint16_t>(length));
 
         if (result != 0) {
             // Failed to start transfer — reset state and signal error
@@ -137,7 +144,8 @@ public:
      * @param length Number of bytes to receive
      * @return true if reception started successfully, false otherwise
      */
-    bool receive(uint8_t* buffer, size_t length) override {
+    bool receive(uint8_t* buffer, size_t length) override
+    {
         if (transfer_in_progress_ || !i2c_read_) {
             return false;
         }
@@ -150,8 +158,7 @@ public:
         // Start async I2C read into internal buffer — completion notified via ISR callback.
         // Callers that pass comm_.getRxBuffer() as buffer will read directly from
         // rx_buffer_ after onTransferComplete() fires; the copy below is skipped.
-        int result = i2c_read_(device_address_, current_mem_address_,
-                               rx_buffer_.data(), static_cast<uint16_t>(length));
+        int result = i2c_read_(device_address_, current_mem_address_, rx_buffer_.data(), static_cast<uint16_t>(length));
 
         if (result != 0) {
             notifyError();
@@ -172,7 +179,8 @@ public:
      * @brief Set the memory address for next I2C operation
      * @param mem_address Memory/register address
      */
-    void setMemoryAddress(uint8_t mem_address) {
+    void setMemoryAddress(uint8_t mem_address)
+    {
         current_mem_address_ = mem_address;
     }
 
@@ -180,7 +188,8 @@ public:
      * @brief Get current memory address
      * @return Current memory address
      */
-    uint8_t getMemoryAddress() const {
+    uint8_t getMemoryAddress() const
+    {
         return current_mem_address_;
     }
 
@@ -188,20 +197,21 @@ public:
      * @brief Get I2C device address
      * @return Device address
      */
-    uint8_t getDeviceAddress() const {
+    uint8_t getDeviceAddress() const
+    {
         return device_address_;
     }
 
-private:
-    uint8_t device_address_;
-    I2CReadFunction i2c_read_;
-    I2CWriteFunction i2c_write_;
-    uint8_t current_mem_address_;
+    private:
+    uint8_t              device_address_;
+    I2CReadFunction      i2c_read_;
+    I2CWriteFunction     i2c_write_;
+    uint8_t              current_mem_address_;
     std::vector<uint8_t> connections_;
     // Note: tx_buffer_, rx_buffer_, and transfer_in_progress_ are in base class
 };
 
-} // namespace interfaces
-} // namespace chipz
+}  // namespace interfaces
+}  // namespace chipz
 
-#endif // CHIPZ_INTERFACES_I2C_INTERFACE_HPP
+#endif  // CHIPZ_INTERFACES_I2C_INTERFACE_HPP
