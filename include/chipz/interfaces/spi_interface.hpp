@@ -5,11 +5,12 @@
 #ifndef CHIPZ_INTERFACES_SPI_INTERFACE_HPP
 #define CHIPZ_INTERFACES_SPI_INTERFACE_HPP
 
-#include "../core/communication_interface.hpp"
-#include <cstdint>
 #include <cstddef>
-#include <vector>
+#include <cstdint>
 #include <functional>
+#include <vector>
+
+#include "../core/communication_interface.hpp"
 
 namespace chipz {
 namespace interfaces {
@@ -24,7 +25,7 @@ namespace interfaces {
  * Arduino SPI, or custom SPI implementations.
  */
 class SPIInterface : public CommunicationInterface {
-public:
+    public:
     /**
      * @brief Function pointer type for SPI transfer operation
      * SPI is full-duplex: transmits and receives simultaneously
@@ -33,9 +34,7 @@ public:
      * @param size Number of bytes to transfer
      * @return 0 on success, error code otherwise
      */
-    using SPITransferFunction = std::function<int(uint8_t* tx_buffer,
-                                                   uint8_t* rx_buffer,
-                                                   uint16_t size)>;
+    using SPITransferFunction = std::function<int(uint8_t* tx_buffer, uint8_t* rx_buffer, uint16_t size)>;
 
     /**
      * @brief Function pointer type for chip select control
@@ -52,10 +51,9 @@ public:
      * setConnection() with the returned ConnectionId so selectConnection()
      * asserts the correct CS pin before every transfer.
      */
-    explicit SPIInterface(SPITransferFunction transfer_func)
-        : CommunicationInterface()
-        , spi_transfer_(transfer_func)
-    {}
+    explicit SPIInterface(SPITransferFunction transfer_func) : CommunicationInterface(), spi_transfer_(transfer_func)
+    {
+    }
 
     /**
      * @brief Register a device on this SPI bus
@@ -63,13 +61,15 @@ public:
      * @param cs_func Function to assert/deassert this device's chip-select pin
      * @return ConnectionId to pass to Chip::setConnection()
      */
-    ConnectionId registerConnection(ChipSelectFunction cs_func) {
+    ConnectionId registerConnection(ChipSelectFunction cs_func)
+    {
         ConnectionId id = nextId();
         connections_.push_back(std::move(cs_func));
         return id;
     }
 
-    void selectConnection(ConnectionId id) override {
+    void selectConnection(ConnectionId id) override
+    {
         // TODO: handle invalid / out-of-range id
         active_cs_ = connections_[id];
     }
@@ -81,7 +81,8 @@ public:
      * @param length Number of bytes to transmit
      * @return true if transmission started successfully, false otherwise
      */
-    bool transmit(const uint8_t* data, size_t length) override {
+    bool transmit(const uint8_t* data, size_t length) override
+    {
         if (transfer_in_progress_ || !spi_transfer_) {
             return false;
         }
@@ -97,17 +98,20 @@ public:
 
         transfer_in_progress_ = true;
 
-        if (active_cs_) active_cs_(true);
+        if (active_cs_) {
+            active_cs_(true);
+        }
 
         // Start async SPI transfer — completion notified via ISR callback.
         // CS is asserted here; deassert belongs in the completion path.
         // With hardware NSS (SPI_NSS_HARD_OUTPUT) active_cs_ is null and the
         // HAL manages the NSS pin automatically.
-        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(),
-                                   static_cast<uint16_t>(length));
+        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(), static_cast<uint16_t>(length));
 
         if (result != 0) {
-            if (active_cs_) active_cs_(false);
+            if (active_cs_) {
+                active_cs_(false);
+            }
             notifyError();
             return false;
         }
@@ -122,7 +126,8 @@ public:
      * @param length Number of bytes to receive
      * @return true if reception started successfully, false otherwise
      */
-    bool receive(uint8_t* buffer, size_t length) override {
+    bool receive(uint8_t* buffer, size_t length) override
+    {
         if (transfer_in_progress_ || !spi_transfer_) {
             return false;
         }
@@ -130,24 +135,31 @@ public:
         ensureBufferSize(tx_buffer_, length);
         ensureBufferSize(rx_buffer_, length);
 
-        for (size_t i = 0; i < length; ++i) tx_buffer_[i] = 0x00;
+        for (size_t i = 0; i < length; ++i) {
+            tx_buffer_[i] = 0x00;
+        }
 
         transfer_in_progress_ = true;
 
-        if (active_cs_) active_cs_(true);
+        if (active_cs_) {
+            active_cs_(true);
+        }
 
-        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(),
-                                   static_cast<uint16_t>(length));
+        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(), static_cast<uint16_t>(length));
 
         if (result != 0) {
-            if (active_cs_) active_cs_(false);
+            if (active_cs_) {
+                active_cs_(false);
+            }
             notifyError();
             return false;
         }
 
         // Copy into caller-provided buffer if different from rx_buffer_
         if (buffer != rx_buffer_.data()) {
-            for (size_t i = 0; i < length; ++i) buffer[i] = rx_buffer_[i];
+            for (size_t i = 0; i < length; ++i) {
+                buffer[i] = rx_buffer_[i];
+            }
         }
 
         return true;
@@ -160,7 +172,8 @@ public:
      * @param length Number of bytes to transfer
      * @return true if transfer successful, false otherwise
      */
-    bool transfer(const uint8_t* tx_data, uint8_t* rx_data, size_t length) {
+    bool transfer(const uint8_t* tx_data, uint8_t* rx_data, size_t length)
+    {
         if (transfer_in_progress_ || !spi_transfer_) {
             return false;
         }
@@ -176,19 +189,24 @@ public:
 
         transfer_in_progress_ = true;
 
-        if (active_cs_) active_cs_(true);
+        if (active_cs_) {
+            active_cs_(true);
+        }
 
-        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(),
-                                   static_cast<uint16_t>(length));
+        int result = spi_transfer_(tx_buffer_.data(), rx_buffer_.data(), static_cast<uint16_t>(length));
 
         if (result != 0) {
-            if (active_cs_) active_cs_(false);
+            if (active_cs_) {
+                active_cs_(false);
+            }
             notifyError();
             return false;
         }
 
         if (rx_data != rx_buffer_.data()) {
-            for (size_t i = 0; i < length; ++i) rx_data[i] = rx_buffer_[i];
+            for (size_t i = 0; i < length; ++i) {
+                rx_data[i] = rx_buffer_[i];
+            }
         }
 
         return true;
@@ -198,14 +216,14 @@ public:
      * @brief Manually control chip select
      * @param select true to assert CS (select), false to deassert
      */
-private:
+    private:
     SPITransferFunction             spi_transfer_;
     ChipSelectFunction              active_cs_;
     std::vector<ChipSelectFunction> connections_;
     // Note: tx_buffer_, rx_buffer_, and transfer_in_progress_ are in base class
 };
 
-} // namespace interfaces
-} // namespace chipz
+}  // namespace interfaces
+}  // namespace chipz
 
-#endif // CHIPZ_INTERFACES_SPI_INTERFACE_HPP
+#endif  // CHIPZ_INTERFACES_SPI_INTERFACE_HPP

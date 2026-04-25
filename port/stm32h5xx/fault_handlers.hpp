@@ -123,28 +123,28 @@ struct FaultInfo {
     // The hardware pushes S0–S15 and FPSCR when FPCA == 1 in CONTROL
     // (extended exception frame). EXC_RETURN bit 4 == 0 signals this case.
     // -----------------------------------------------------------------------
-    uint32_t s[16]; ///< Floating-point registers S0–S15.
-    uint32_t fpscr; ///< Floating-Point Status and Control Register.
-    uint32_t fpu_active; ///< 1 when S0–S15 / FPSCR above are valid.
+    uint32_t s[16];       ///< Floating-point registers S0–S15.
+    uint32_t fpscr;       ///< Floating-Point Status and Control Register.
+    uint32_t fpu_active;  ///< 1 when S0–S15 / FPSCR above are valid.
 
     // -----------------------------------------------------------------------
     // Stack pointer and execution mode at the time of the fault.
     // -----------------------------------------------------------------------
-    uint32_t sp;         ///< Active stack pointer (MSP or PSP) at fault entry.
-    uint32_t exc_return; ///< EXC_RETURN value in LR on exception entry.
-    uint32_t msp;        ///< Main Stack Pointer.
-    uint32_t psp;        ///< Process Stack Pointer.
-    uint32_t control;    ///< CONTROL register (FPCA, SPSEL, nPRIV).
+    uint32_t sp;          ///< Active stack pointer (MSP or PSP) at fault entry.
+    uint32_t exc_return;  ///< EXC_RETURN value in LR on exception entry.
+    uint32_t msp;         ///< Main Stack Pointer.
+    uint32_t psp;         ///< Process Stack Pointer.
+    uint32_t control;     ///< CONTROL register (FPCA, SPSEL, nPRIV).
 
     // -----------------------------------------------------------------------
     // SCB fault status registers.
     // -----------------------------------------------------------------------
-    uint32_t cfsr;  ///< Configurable Fault Status (MMFSR | BFSR | UFSR).
-    uint32_t hfsr;  ///< HardFault Status Register.
-    uint32_t dfsr;  ///< Debug Fault Status Register.
-    uint32_t mmfar; ///< MemManage Fault Address (valid when cfsr[MMARVALID]).
-    uint32_t bfar;  ///< BusFault Address Register (valid when cfsr[BFARVALID]).
-    uint32_t afsr;  ///< Auxiliary Fault Status Register.
+    uint32_t cfsr;   ///< Configurable Fault Status (MMFSR | BFSR | UFSR).
+    uint32_t hfsr;   ///< HardFault Status Register.
+    uint32_t dfsr;   ///< Debug Fault Status Register.
+    uint32_t mmfar;  ///< MemManage Fault Address (valid when cfsr[MMARVALID]).
+    uint32_t bfar;   ///< BusFault Address Register (valid when cfsr[BFARVALID]).
+    uint32_t afsr;   ///< Auxiliary Fault Status Register.
 
     // -----------------------------------------------------------------------
     // Raw stack snapshot for call-chain reconstruction.
@@ -152,7 +152,7 @@ struct FaultInfo {
     // which includes the exception frame at [0..7] (or [0..25] with FPU).
     // -----------------------------------------------------------------------
     static constexpr uint32_t kStackSnapshotWords = 32u;
-    uint32_t stack_snapshot[kStackSnapshotWords];
+    uint32_t                  stack_snapshot[kStackSnapshotWords];
 };
 
 static_assert(sizeof(FaultInfo) == 71 * sizeof(uint32_t),
@@ -164,9 +164,9 @@ static constexpr uint32_t kFaultMagic = 0xDEAD'C0DEu;
 /// Fault capture in .noinit RAM — survives warm resets.
 extern FaultInfo g_fault_info;
 
-} // namespace stm32h5xx
-} // namespace port
-} // namespace chipz
+}  // namespace stm32h5xx
+}  // namespace port
+}  // namespace chipz
 
 /**
  * Application-overridable report hook called after the fault registers have

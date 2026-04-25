@@ -33,23 +33,27 @@ namespace CompletionSource {
  * flight it cannot be recalled.
  */
 class External {
-public:
+    public:
     using RegisterFn = std::function<void(std::function<void()>)>;
 
-    explicit External(RegisterFn register_fn)
-        : register_fn_(std::move(register_fn)) {}
+    explicit External(RegisterFn register_fn) : register_fn_(std::move(register_fn))
+    {
+    }
 
-    void arm(uint32_t /*duration_us*/, std::function<void()> on_complete) {
+    void arm(uint32_t /*duration_us*/, std::function<void()> on_complete)
+    {
         register_fn_(std::move(on_complete));
     }
 
-    void cancel() {}  // no-op: external events cannot be recalled
+    void cancel()
+    {
+    }  // no-op: external events cannot be recalled
 
-private:
+    private:
     RegisterFn register_fn_;
 };
 
-} // namespace CompletionSource
-} // namespace chipz
+}  // namespace CompletionSource
+}  // namespace chipz
 
-#endif // CHIPZ_COMPLETION_SOURCES_EXTERNAL_COMPLETION_SOURCE_HPP
+#endif  // CHIPZ_COMPLETION_SOURCES_EXTERNAL_COMPLETION_SOURCE_HPP

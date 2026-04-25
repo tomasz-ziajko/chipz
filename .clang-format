@@ -1,0 +1,47 @@
+# Requires clang-format 21 or later
+
+BasedOnStyle: Google
+AccessModifierOffset: 0
+IndentWidth: 4
+InsertBraces: true
+AllowShortFunctionsOnASingleLine: None
+
+AllowShortEnumsOnASingleLine: false
+
+BreakTemplateDeclarations: true
+ColumnLimit: 120
+BreakBeforeBraces: Stroustrup
+AlignConsecutiveDeclarations: true
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: true
+
+AlignConsecutiveBitFields:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+  AcrossEmptyLines: true
+  AcrossComments: true
+  AlignCaseArrows: true
+  AlignCaseColons: true
+
+AlignEscapedNewlines: Left
+AlignOperands: Align
+
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 2
+
+AllowAllArgumentsOnNextLine: false
+
+BreakConstructorInitializers: AfterColon
+BreakBeforeBinaryOperators: None

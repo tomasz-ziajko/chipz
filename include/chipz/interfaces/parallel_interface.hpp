@@ -5,13 +5,14 @@
 #ifndef CHIPZ_INTERFACES_PARALLEL_INTERFACE_HPP
 #define CHIPZ_INTERFACES_PARALLEL_INTERFACE_HPP
 
-#include "../core/communication_interface.hpp"
-#include "../core/concepts.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <functional>
 #include <tuple>
+
+#include "../core/communication_interface.hpp"
+#include "../core/concepts.hpp"
 
 namespace chipz {
 namespace interfaces {
@@ -66,14 +67,14 @@ namespace interfaces {
  * @tparam N       Number of parallel lines (1–32)
  * @tparam Sources Zero or more CompletionSource types (owned by value)
  */
-template<size_t N, typename... Sources>
+template <size_t N, typename... Sources>
 class ParallelInterface : public CommunicationInterface {
     static_assert(N >= 1 && N <= 32, "ParallelInterface: N must be between 1 and 32");
     static_assert((chipz::concepts::CompletionSource<Sources> && ...),
                   "ParallelInterface: each Source must satisfy chipz::concepts::CompletionSource "
                   "(e.g. CompletionSource::Timer, CompletionSource::External)");
 
-public:
+    public:
     using WriteFn = std::function<void(uint32_t)>;
     using ReadFn  = std::function<uint32_t()>;
 
@@ -86,11 +87,10 @@ public:
      * Sources are owned by value.  When no sources are provided, both
      * transmit() overloads complete synchronously before returning.
      */
-    explicit ParallelInterface(WriteFn write_fn, ReadFn read_fn, Sources... sources)
-        : write_fn_(std::move(write_fn))
-        , read_fn_(std::move(read_fn))
-        , sources_(std::move(sources)...)
-    {}
+    explicit ParallelInterface(WriteFn write_fn, ReadFn read_fn, Sources... sources) :
+        write_fn_(std::move(write_fn)), read_fn_(std::move(read_fn)), sources_(std::move(sources)...)
+    {
+    }
 
     // -------------------------------------------------------------------------
     // CommunicationInterface — transmit
@@ -99,8 +99,11 @@ public:
     /**
      * @brief Immediate transmit — notifyTransferComplete fires before returning
      */
-    bool transmit(const uint8_t* data, size_t length) override {
-        if (!write_fn_ || transfer_in_progress_) return false;
+    bool transmit(const uint8_t* data, size_t length) override
+    {
+        if (!write_fn_ || transfer_in_progress_) {
+            return false;
+        }
         transfer_in_progress_ = true;
         write_fn_(bus_value_from(data, length));
         notifyTransferComplete(true);
@@ -117,13 +120,17 @@ public:
      * @param duration_us Forwarded to timer sources (ignored by external sources
      *                    and when no sources are configured).
      */
-    bool transmit(const uint8_t* data, size_t length, uint32_t duration_us) override {
-        if (!write_fn_ || transfer_in_progress_) return false;
+    bool transmit(const uint8_t* data, size_t length, uint32_t duration_us) override
+    {
+        if (!write_fn_ || transfer_in_progress_) {
+            return false;
+        }
         transfer_in_progress_ = true;
         write_fn_(bus_value_from(data, length));
         if constexpr (sizeof...(Sources) == 0) {
             notifyTransferComplete(true);
-        } else {
+        }
+        else {
             arm_sources(duration_us);
         }
         return true;
@@ -136,26 +143,30 @@ public:
     /**
      * @brief Synchronous receive — samples the bus and returns immediately
      */
-    bool receive(uint8_t* buffer, size_t length) override {
-        if (!read_fn_ || transfer_in_progress_) return false;
+    bool receive(uint8_t* buffer, size_t length) override
+    {
+        if (!read_fn_ || transfer_in_progress_) {
+            return false;
+        }
         transfer_in_progress_ = true;
         bus_value_to(buffer, length, read_fn_());
         notifyTransferComplete(true);
         return true;
     }
 
-private:
-    WriteFn                  write_fn_;
-    ReadFn                   read_fn_;
-    std::tuple<Sources...>   sources_;
-    std::atomic<int>         pending_count_{0};
+    private:
+    WriteFn                write_fn_;
+    ReadFn                 read_fn_;
+    std::tuple<Sources...> sources_;
+    std::atomic<int>       pending_count_{0};
 
     // -------------------------------------------------------------------------
     // Buffer ↔ bus-value conversion (little-endian, masked to N bits)
     // -------------------------------------------------------------------------
 
-    static uint32_t bus_value_from(const uint8_t* data, size_t length) {
-        uint32_t value = 0;
+    static uint32_t bus_value_from(const uint8_t* data, size_t length)
+    {
+        uint32_t     value = 0;
         const size_t bytes = std::min(length, kByteCount);
         for (size_t i = 0; i < bytes; ++i) {
             value |= static_cast<uint32_t>(data[i]) << (8u * i);
@@ -163,7 +174,8 @@ private:
         return value & kBusMask;
     }
 
-    static void bus_value_to(uint8_t* buffer, size_t length, uint32_t value) {
+    static void bus_value_to(uint8_t* buffer, size_t length, uint32_t value)
+    {
         value &= kBusMask;
         const size_t bytes = std::min(length, kByteCount);
         for (size_t i = 0; i < bytes; ++i) {
@@ -175,11 +187,11 @@ private:
     // Completion barrier
     // -------------------------------------------------------------------------
 
-    void arm_sources(uint32_t duration_us) {
+    void arm_sources(uint32_t duration_us)
+    {
         // Set count before arming any source — a timer with duration_us == 0
         // fires synchronously inside arm(), and must see the full count.
-        pending_count_.store(static_cast<int>(sizeof...(Sources)),
-                             std::memory_order_release);
+        pending_count_.store(static_cast<int>(sizeof...(Sources)), std::memory_order_release);
 
         auto on_complete = [this]() {
             if (pending_count_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
@@ -187,9 +199,7 @@ private:
             }
         };
 
-        std::apply([&](auto&... src) {
-            (src.arm(duration_us, on_complete), ...);
-        }, sources_);
+        std::apply([&](auto&... src) { (src.arm(duration_us, on_complete), ...); }, sources_);
     }
 };
 
@@ -201,7 +211,7 @@ private:
  */
 using GPIOInterface = ParallelInterface<1>;
 
-} // namespace interfaces
-} // namespace chipz
+}  // namespace interfaces
+}  // namespace chipz
 
-#endif // CHIPZ_INTERFACES_PARALLEL_INTERFACE_HPP
+#endif  // CHIPZ_INTERFACES_PARALLEL_INTERFACE_HPP
