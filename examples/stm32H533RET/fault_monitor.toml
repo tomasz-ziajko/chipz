@@ -1,0 +1,15 @@
+backend                  = "openocd"
+suppress_debugger_output = true
+cfg         = "openocd.cfg"
+elf         = "build/Debug/stm32H533RET.elf"
+map         = "build/Debug/stm32H533RET.map"
+src         = "../.."
+host        = "localhost"
+port        = 6666
+timeout     = 10
+tool_prefix = "starm-"
+clear       = true
+
+[server]
+bin  = "openocd"
+args = ["-f", "openocd.cfg"]

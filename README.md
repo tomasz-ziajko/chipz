@@ -182,6 +182,86 @@ bool main() override {
 
 HAL handles not initialized in your project (e.g. `hi2c3` when only I2C1 is used) are declared `__attribute__((weak))` so they resolve to null at link time without error.
 
+## Crash Analysis
+
+`port/stm32h5xx/fault_handlers.cpp` installs handlers for HardFault, BusFault,
+MemManage, and UsageFault. On entry each handler captures the full register
+state — stacked frame, FPU registers, SCB fault-status registers, and a 32-word
+stack snapshot — into a global `g_fault_info` struct stored in `.noinit` RAM.
+The magic sentinel `0xDEADC0DE` is written **last**, so it doubles as a
+completion flag. The handler then spins, leaving the CPU halted and the data
+stable for the debugger to read.
+
+`.noinit` RAM is not zeroed by the C startup library, so `g_fault_info` also
+survives warm resets (watchdog, software reset). Add the section to your linker
+script if it is not already present:
+
+```
+.noinit (NOLOAD) :
+{
+  KEEP(*(.noinit))
+} >RAM
+```
+
+### Automated capture via OpenOCD
+
+With OpenOCD running and the device connected, run from the example directory:
+
+```sh
+python ../../tools/fault_monitor.py --config fault_monitor.toml
+```
+
+The tool resolves `g_fault_info` from the ELF, connects to OpenOCD's TCL port
+(4444), polls the magic word for up to `timeout` seconds, reads the struct when
+it appears, and feeds it straight into the fault decoder. The magic word is
+cleared afterward so a second run does not re-report the same crash.
+
+`fault_monitor.toml` (committed alongside each example project):
+
+```toml
+elf         = "build/Debug/stm32H533RET.elf"
+map         = "build/Debug/stm32H533RET.map"
+src         = "../.."
+host        = "localhost"
+port        = 4444
+timeout     = 5
+tool_prefix = "starm-"
+clear       = true
+```
+
+Any value can be overridden on the command line, e.g. `--timeout 15`.
+
+### Manual capture via GDB
+
+```
+(gdb) dump binary memory dump.bin &g_fault_info ((char*)&g_fault_info + sizeof(g_fault_info))
+```
+
+Then decode offline:
+
+```sh
+python tools/fault_decoder.py --elf firmware.elf --map firmware.map \
+                               --binary dump.bin --src .
+```
+
+`fault_decoder.py` also accepts `--gdb` (pasted `x/71xw` output) and `--hex`
+(space-separated hex words).
+
+### Real-time hook
+
+For targets without a debugger attached, override `chipz_fault_report()` to
+emit the dump immediately at fault time (UART, ITM/SWO, etc.):
+
+```cpp
+extern "C"
+void chipz_fault_report(const chipz::port::stm32h5xx::FaultInfo& info) {
+    // called from fault handler context — keep it simple
+    char buf[32];
+    snprintf(buf, sizeof(buf), "FAULT pc=%08lx\r\n", info.pc);
+    HAL_UART_Transmit(&huart2, (uint8_t*)buf, strlen(buf), 50);
+}
+```
+
 ## Project Structure
 
 ```
@@ -220,8 +300,10 @@ chipz/
 │       └── irq.hpp
 ├── examples/
 │   └── stm32H533RET/           # NUCLEO-H533RE: DS3231 (I2C1) + MAX6675 (SPI2)
+│       └── fault_monitor.toml  # OpenOCD crash capture config for this example
 ├── tools/
-│   └── fault_decoder.py        # Decodes fault register dumps from fault_handlers.cpp
+│   ├── fault_decoder.py        # Decodes a FaultInfo dump (binary / GDB / hex input)
+│   └── fault_monitor.py        # Connects to OpenOCD, captures and decodes live crashes
 └── CMakeLists.txt
 ```
 

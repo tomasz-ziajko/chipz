@@ -39,6 +39,7 @@ add_executable(${CMAKE_PROJECT_NAME})
 
 # Add STM32CubeMX generated sources
 add_subdirectory(cmake/stm32cubemx)
+include(cmake/chipz-post-cubemx.cmake)
 
 add_subdirectory(../.. chipz)
 add_subdirectory(../../port/stm32h5xx port_stm32h5xx)
@@ -86,7 +87,7 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 )
 
 # Add linked libraries
-target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE
+target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
     chipz::port_stm32h5xx
     chipz::core
