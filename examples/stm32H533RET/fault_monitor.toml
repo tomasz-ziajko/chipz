@@ -1,4 +1,5 @@
-backend     = "openocd"
+backend                  = "openocd"
+suppress_debugger_output = true
 cfg         = "openocd.cfg"
 elf         = "build/Debug/stm32H533RET.elf"
 map         = "build/Debug/stm32H533RET.map"

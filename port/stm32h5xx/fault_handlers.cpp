@@ -146,8 +146,13 @@ extern "C" void chipz_fault_handler_c(uint32_t* frame, uint32_t exc_ret, uint32_
     // Captures kStackSnapshotWords words starting from the exception frame
     // base (frame[0] == R0).  The Python decoder uses this to walk the call
     // chain by identifying word-aligned values that fall in flash (.text).
+    constexpr uint32_t kRamStart = 0x20000000U;
+    constexpr uint32_t kRamEnd   = 0x20000000U + 272U * 1024U;
     for (uint32_t i = 0U; i < FaultInfo::kStackSnapshotWords; ++i) {
-        f.stack_snapshot[i] = frame[i];
+        auto addr = reinterpret_cast<uintptr_t>(&frame[i]);
+        f.stack_snapshot[i] = (addr >= kRamStart && addr + 4U <= kRamEnd)
+                                  ? frame[i]
+                                  : 0U;
     }
 
     // --- Commit ------------------------------------------------------------
