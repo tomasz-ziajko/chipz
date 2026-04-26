@@ -65,9 +65,7 @@ namespace chipz {
 namespace port {
 namespace stm32h5xx {
 
-// Placed in .noinit so the C startup library does not zero it on reset.
-// Survives watchdog and software resets; contents remain valid across boots.
-__attribute__((section(".noinit"))) FaultInfo g_fault_info;
+__attribute__((section(".crash_data"))) FaultInfo g_fault_info;
 
 }  // namespace stm32h5xx
 }  // namespace port

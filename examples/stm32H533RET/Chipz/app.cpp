@@ -121,5 +121,14 @@ extern "C" void chipz_app_init()
 
 extern "C" void chipz_app_run()
 {
+    // TEST CRASH — remove before production use
+    // Triggers a HardFault (DACCVIOL) ~3 s after boot to exercise the
+    // fault capture and fault_monitor.py analysis pipeline.
+    static uint32_t tick = 0;
+    if (++tick == 3000u) {
+        volatile uint32_t* null_ptr = nullptr;
+        *null_ptr = 0xDEAD'BEEFu;
+    }
+
     g_core.service();
 }
