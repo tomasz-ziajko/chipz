@@ -50,16 +50,17 @@ static auto s_i2c1_pcf_write = [](const uint8_t* data, uint16_t len) -> int {
     return HAL_I2C_Master_Transmit_IT(&hi2c1, 0x27u << 1, const_cast<uint8_t*>(data), len);
 };
 
-using PCF8574IfaceType = chipz::devices::PCF8574Interface<1, decltype(s_i2c1_pcf_write)>;
-PCF8574IfaceType g_pcf8574_iface{s_i2c1_pcf_write};
+using PCF8574Type = chipz::devices::PCF8574<1, decltype(s_i2c1_pcf_write)>;
+PCF8574Type g_pcf8574{s_i2c1_pcf_write};
 
-// Route I2C1 ISR callbacks to g_pcf8574_iface
-chipz::CommunicationInterface* g_i2c1_iface = &g_pcf8574_iface;
+// Route I2C1 ISR callbacks to g_pcf8574's parallel interface
+chipz::CommunicationInterface* g_i2c1_iface = &g_pcf8574.getParallelInterface();
 
 chipz::port::stm32h5xx::TIM6Timer        g_tim6_timer{htim6};
 chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_tim6_timer, chipz::port::stm32h5xx::spinUs};
 
-chipz::devices::HD44780 g_hd44780{g_pcf8574_iface, {chipz::devices::HD44780::DisplaySize::Size20x4, false, false}};
+chipz::devices::HD44780 g_hd44780{g_pcf8574.getParallelInterface(),
+                                   {chipz::devices::HD44780::DisplaySize::Size20x4, false, false}};
 
 // ---------------------------------------------------------------------------
 // TIM6 bridge — called from HAL_TIM_PeriodElapsedCallback in chipz_isrs.cpp
@@ -77,6 +78,7 @@ extern "C" void chipz_tim6_elapsed()
 extern "C" void chipz_app_init()
 {
     chipz::port::stm32h5xx::initDwt();
+    g_core.add(g_pcf8574);
     g_core.add(g_hd44780);
     g_core.initialize();
 }
@@ -86,8 +88,8 @@ extern "C" void demo_app_run()
     static bool     initialized     = false;
     static bool     hw_visible      = false;
     static uint8_t  demo_line       = 0;   // 0=line2, 1=line3, 2=line4
-    static bool     demo_need_clear = false;
-    static uint16_t demo_clear_pos  = 0;
+    static bool     demo_need_write = false;
+    static uint16_t demo_write_pos  = 0;
     static uint32_t hw_deadline     = 0;
     static uint32_t demo_deadline   = 0;
 
@@ -108,10 +110,10 @@ extern "C" void demo_app_run()
     if (initialized && g_hd44780.isReady()) {
         uint32_t now = HAL_GetTick();
 
-        if (demo_need_clear) {
-            g_hd44780.writeBufferAtPosition(clear2, demo_clear_pos, 16);
+        if (demo_need_write) {
+            g_hd44780.writeBufferAtPosition(chipz, demo_write_pos, 16);
             g_core.wake(g_hd44780);
-            demo_need_clear = false;
+            demo_need_write = false;
         }
         else if (static_cast<int32_t>(now - hw_deadline) >= 0) {
             hw_deadline += 3000;
@@ -121,11 +123,12 @@ extern "C" void demo_app_run()
         }
         else if (static_cast<int32_t>(now - demo_deadline) >= 0) {
             demo_deadline += 2000;
-            demo_clear_pos = 20u + static_cast<uint16_t>(demo_line) * 20u;
-            demo_line      = (demo_line + 1u) % 3u;
-            g_hd44780.writeBufferAtPosition(chipz, 20u + static_cast<uint16_t>(demo_line) * 20u, 16);
+            uint16_t old_pos = 20u + static_cast<uint16_t>(demo_line) * 20u;
+            demo_line        = (demo_line + 1u) % 3u;
+            demo_write_pos   = 20u + static_cast<uint16_t>(demo_line) * 20u;
+            g_hd44780.writeBufferAtPosition(clear2, old_pos, 16);
             g_core.wake(g_hd44780);
-            demo_need_clear = true;
+            demo_need_write = true;
         }
     }
 

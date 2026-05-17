@@ -556,10 +556,6 @@ class HD44780 : public Chip<CommunicationInterface> {
                     buffer_write_need_cursor_ = true;
                 }
             }
-
-            if (buffer_write_chars_sent_ >= buffer_write_length_) {
-                buffer_write_in_progress_ = false;
-            }
         }
     }
 
@@ -584,9 +580,6 @@ class HD44780 : public Chip<CommunicationInterface> {
         }
 
         buffer_write_index_++;
-        if (buffer_write_index_ >= buffer_write_total_) {
-            buffer_write_in_progress_ = false;
-        }
     }
 };
 

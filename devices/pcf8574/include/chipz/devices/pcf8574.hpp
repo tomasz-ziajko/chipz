@@ -5,43 +5,43 @@
 #ifndef CHIPZ_DEVICES_PCF8574_HPP
 #define CHIPZ_DEVICES_PCF8574_HPP
 
+#include <chipz/core/chip.hpp>
 #include <chipz/core/communication_interface.hpp>
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <span>
+#include <string>
 
 namespace chipz {
 namespace devices {
 
 /**
- * @brief PCF8574 I2C GPIO expander as a CommunicationInterface
+ * @brief PCF8574 GPIO expander output as a CommunicationInterface
  *
- * Wraps a single-byte I2C Master_Transmit write as a chipz CommunicationInterface
- * so that HD44780<PCF8574Interface<...>> can use it directly as its parallel bus.
+ * Implements a single-byte parallel write bus backed by HAL_I2C_Master_Transmit_IT.
+ * PCF8574 has no register addresses — each I2C transaction is device_addr + one data byte.
  *
- * PCF8574 has no register addresses — each transaction is just device_addr + data_byte.
- * Use HAL_I2C_Master_Transmit_IT (not Mem_Write_IT) in the write callable.
- *
- * Standard HD44780 pin mapping:
+ * Standard HD44780 pin mapping (PCF8574 output → LCD signal):
  *   P0=RS  P1=RW  P2=E  P3=BL  P4=D4  P5=D5  P6=D6  P7=D7
  *
  * WriteFn signature: (const uint8_t* data, uint16_t len) -> int
  *   Returns 0 (HAL_OK) on success, non-zero on error.
  *
- * ISR routing: assign g_i2cN_iface = &your_instance in app.cpp so that
+ * ISR routing: point g_i2cN_iface at this object so that
  * HAL_I2C_MasterTxCpltCallback routes to notifyTransferComplete().
  *
  * @tparam N        Buffer size in bytes (1 for single-byte PCF8574 writes)
  * @tparam WriteFn  Callable type for the I2C write function
  */
 template <size_t N, typename WriteFn>
-class PCF8574Interface : public CommunicationInterface {
-    static_assert(N >= 1, "PCF8574Interface buffer size must be at least 1");
+class PCF8574GpioInterface : public CommunicationInterface {
+    static_assert(N >= 1, "PCF8574GpioInterface buffer size must be at least 1");
 
     public:
     static constexpr size_t kBufferSize = N;
 
-    explicit PCF8574Interface(WriteFn write_fn) : write_fn_(write_fn) {}
+    explicit PCF8574GpioInterface(WriteFn write_fn) : write_fn_(write_fn) {}
 
     uint8_t* getTxBuffer() override
     {
@@ -77,6 +77,85 @@ class PCF8574Interface : public CommunicationInterface {
     WriteFn                write_fn_;
     std::array<uint8_t, N> tx_buf_{};
     std::array<uint8_t, N> rx_buf_{};
+};
+
+/**
+ * @brief PCF8574 I2C GPIO expander — Chip wrapper
+ *
+ * Models the PCF8574 as a first-class chipz Chip registered with Core.
+ * It owns a PCF8574GpioInterface that HD44780 (or any other driver) can use
+ * as its parallel bus by calling getParallelInterface().
+ *
+ * Usage:
+ * @code
+ *   auto write = [](const uint8_t* d, uint16_t n) { return HAL_I2C_Master_Transmit_IT(&hi2c1, addr, d, n); };
+ *   PCF8574<1, decltype(write)> g_pcf8574{write};
+ *   g_core.add(g_pcf8574);
+ *   HD44780 g_hd44780{g_pcf8574.getParallelInterface(), ...};
+ *   g_i2c1_iface = &g_pcf8574.getParallelInterface();  // ISR routing
+ * @endcode
+ *
+ * @tparam N        I2C buffer size in bytes (1 for PCF8574)
+ * @tparam WriteFn  Callable type for the underlying I2C write function
+ */
+template <size_t N, typename WriteFn>
+class PCF8574 : public ChipBase {
+    public:
+    explicit PCF8574(WriteFn write_fn) :
+        gpio_iface_(write_fn),
+        comm_ifaces_{&gpio_iface_}
+    {
+    }
+
+    PCF8574GpioInterface<N, WriteFn>& getParallelInterface()
+    {
+        return gpio_iface_;
+    }
+
+    // -------------------------------------------------------------------------
+    // ChipBase interface
+    // -------------------------------------------------------------------------
+
+    bool initialize() override
+    {
+        return true;
+    }
+
+    bool reset() override
+    {
+        return true;
+    }
+
+    bool isReady() const override
+    {
+        return true;
+    }
+
+    ChipBase::Status getStatus() const override
+    {
+        return ChipBase::Status::Ready;
+    }
+
+    std::string getDeviceId() const override
+    {
+        return "PCF8574";
+    }
+
+    DriverTask run() override
+    {
+        while (true) {
+            co_yield WaitCondition::demand();
+        }
+    }
+
+    std::span<CommunicationInterface*> getCommInterfaces() override
+    {
+        return {comm_ifaces_, 1};
+    }
+
+    private:
+    PCF8574GpioInterface<N, WriteFn> gpio_iface_;
+    CommunicationInterface*          comm_ifaces_[1];
 };
 
 }  // namespace devices
