@@ -25,10 +25,12 @@ namespace devices {
  *   - I2C expander + ExternalCompletionSource: driver waits for each I2C transaction
  *   - Both combined: barrier fires when the slower of the two completes
  *
- * Expected bus bit layout (ParallelInterface<6> or equivalent):
- *   bits [3:0]  D4–D7 (nibble data, high nibble transmitted first)
- *   bit  4      RS    (0 = command register, 1 = character data)
- *   bit  5      E     (enable; HD44780 latches data on falling edge)
+ * Bus byte layout matches PCF8574 pin mapping:
+ *   bit 0  RS    (0 = command register, 1 = character data)
+ *   bit 1  RW    (always 0, write-only)
+ *   bit 2  E     (enable; HD44780 latches data on falling edge)
+ *   bit 3  BL    (backlight, always 1)
+ *   bits [7:4]  D4–D7 (nibble data, high nibble transmitted first)
  *
  * Scheduling:
  *   Uninit      — first run() returns delayMs(DELAY_INIT_MS) for power-on settle.
@@ -37,10 +39,11 @@ namespace devices {
  *                 after writeBuffer() / writeBufferAtPosition() to resume.
  *   Transfer    — each run() advances one nibble/byte phase, suspends on comm.
  *
- * @tparam CommInterface Communication interface type (must support timed transmit)
  */
-template <typename CommInterface>
-class HD44780 : public Chip<CommInterface> {
+class HD44780 : public Chip<CommunicationInterface> {
+    using Parallel     = CommunicationInterface;
+    using Status       = ChipBase::Status;
+
     public:
     enum class DisplaySize {
         Size16x2,
@@ -61,8 +64,8 @@ class HD44780 : public Chip<CommInterface> {
      * @param comm   Interface wired per bus bit layout described above
      * @param config Display geometry and cursor settings
      */
-    HD44780(CommInterface& comm, const Config& config) :
-        Chip<CommInterface>(comm),
+    HD44780(Parallel& comm, const Config& config) :
+        Chip<CommunicationInterface>(comm),
         config_(config),
         status_(ChipBase::Status::Uninitialized),
         transfer_state_(TransferState::Idle),
@@ -104,7 +107,7 @@ class HD44780 : public Chip<CommInterface> {
 
     bool initialize() override
     {
-        if (!this->get<CommInterface>().isReady()) {
+        if (!this->template get<Parallel>().isReady()) {
             status_ = ChipBase::Status::Error;
             return false;
         }
@@ -136,7 +139,7 @@ class HD44780 : public Chip<CommInterface> {
 
     bool isReady() const override
     {
-        return status_ == ChipBase::Status::Ready && this->get<CommInterface>().isReady() && past_init_ &&
+        return status_ == ChipBase::Status::Ready && this->template get<Parallel>().isReady() && past_init_ &&
                !buffer_write_in_progress_;
     }
 
@@ -168,13 +171,20 @@ class HD44780 : public Chip<CommInterface> {
         // Initialization sequence
         handleInitializingState();  // starts first nibble
         while (!past_init_) {
-            co_yield WaitCondition::comm(this->get<CommInterface>());
+            co_yield WaitCondition::comm(this->template get<Parallel>());
             if (!last_transfer_ok_) {
                 while (true) {
                     co_yield WaitCondition::demand();
                 }
             }
             handleInitializingState();
+            // CMD_CLEAR_DISPLAY / RETURN_HOME require 1.52ms to execute internally.
+            // handleInitializingState() returns without starting the next step for
+            // these commands; insert the required delay then kick off the next step.
+            if (transfer_state_ == TransferState::Idle && !past_init_) {
+                co_yield WaitCondition::delayUs(DELAY_CLEAR_US);
+                handleInitializingState();
+            }
         }
 
         // Main loop: demand until writeBuffer/writeBufferAtPosition, then drive transfer
@@ -185,7 +195,7 @@ class HD44780 : public Chip<CommInterface> {
             }
             handleTransferState();  // kicks off first nibble of first byte
             while (buffer_write_in_progress_ || transfer_state_ != TransferState::Idle) {
-                co_yield WaitCondition::comm(this->get<CommInterface>());
+                co_yield WaitCondition::comm(this->template get<Parallel>());
                 if (!last_transfer_ok_) {
                     break;
                 }
@@ -271,7 +281,8 @@ class HD44780 : public Chip<CommInterface> {
     /// E=0 hold + normal command execution time (min 37 µs; 50 µs with margin)
     static constexpr uint32_t DELAY_E_LOW_US = 50;
 
-    /// Clear Display / Return Home execution time (min 1.52 ms)
+    /// Clear Display / Return Home execution time (min 1.52 ms; 3 ms to cover
+    /// 1 ms tick granularity — worst-case under-run with a 1 kHz SysTick is ~1 ms)
     static constexpr uint32_t DELAY_CLEAR_US = 2000;
 
     // -------------------------------------------------------------------------
@@ -344,21 +355,16 @@ class HD44780 : public Chip<CommInterface> {
     // Bus helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * @brief Pack nibble, RS, and E flag into the 6-bit bus value
-     *
-     *   bits [3:0] = nibble (D4–D7)
-     *   bit  4     = RS
-     *   bit  5     = E
-     */
+    /// Pack nibble, RS, and E into a PCF8574 output byte (P0=RS, P2=E, P3=BL, P4-P7=D4-D7)
     static constexpr uint8_t busVal(uint8_t nibble, bool rs, bool e) noexcept
     {
-        return (nibble & 0x0Fu) | (rs ? 0x10u : 0u) | (e ? 0x20u : 0u);
+        // PCF8574: P0=RS, P1=RW(0), P2=E, P3=BL(1), P4-P7=D4-D7
+        return (rs ? 0x01u : 0u) | (e ? 0x04u : 0u) | 0x08u | ((nibble & 0x0Fu) << 4);
     }
 
     void sendBusValue(uint8_t val, uint32_t duration_us)
     {
-        this->template transmit<CommInterface>(&val, 1u, duration_us);
+        this->template transmit<Parallel>(&val, 1u, duration_us);
     }
 
     /// Start a full byte transfer (high nibble first, 4-bit mode)
@@ -442,6 +448,11 @@ class HD44780 : public Chip<CommInterface> {
                 return;
             }
             init_step_++;
+            // These commands need a scheduler delay before the next step starts.
+            // Return here so run() can co_yield delayUs before calling us again.
+            if (current_byte_ == CMD_CLEAR_DISPLAY || current_byte_ == CMD_RETURN_HOME) {
+                return;
+            }
         }
         handleInitStep();
     }
@@ -545,10 +556,6 @@ class HD44780 : public Chip<CommInterface> {
                     buffer_write_need_cursor_ = true;
                 }
             }
-
-            if (buffer_write_chars_sent_ >= buffer_write_length_) {
-                buffer_write_in_progress_ = false;
-            }
         }
     }
 
@@ -573,9 +580,6 @@ class HD44780 : public Chip<CommInterface> {
         }
 
         buffer_write_index_++;
-        if (buffer_write_index_ >= buffer_write_total_) {
-            buffer_write_in_progress_ = false;
-        }
     }
 };
 

@@ -44,14 +44,23 @@ namespace chipz {
  * @tparam kIRQnFirst Lowest IRQn value (typically -15 for ARM Cortex-M)
  * @tparam kIRQnLast  Highest IRQn value
  */
+/// Signature for a platform-provided sub-millisecond busy-spin function.
+/// The implementation should block for exactly `us` microseconds using a
+/// hardware cycle counter (e.g. DWT->CYCCNT on ARM Cortex-M).
+using SpinFn = void (*)(uint32_t us);
+
 template <typename IRQnType, int16_t kIRQnFirst, int16_t kIRQnLast>
 class Core {
     public:
     static constexpr size_t kRange     = static_cast<size_t>(kIRQnLast - kIRQnFirst + 1);
     static constexpr size_t kMaskWords = (kRange + 31u) / 32u;
 
-    explicit Core(TimerInterface& timer) :
+    /// @param timer    One-shot hardware timer; drives all ms-granularity deadlines.
+    /// @param spin_fn  Optional µs busy-spin; required for sub-ms DelayUs precision.
+    ///                 If nullptr, the fine remainder of a DelayUs is silently dropped.
+    explicit Core(TimerInterface& timer, SpinFn spin_fn = nullptr) :
         timer_(timer),
+        spin_fn_(spin_fn),
         pending_(false),
         tick_frequency_hz_(timer.getTickFrequencyHz()),
         ticks_per_ms_(static_cast<uint64_t>(tick_frequency_hz_) / 1000u)
@@ -246,6 +255,10 @@ class Core {
             }
 
             best->ran_this_cycle = true;
+            if (best->fine_us > 0u && spin_fn_) {
+                spin_fn_(best->fine_us);
+            }
+            best->fine_us = 0u;
             best->task.resume();
 
             if (best->task.done()) {
@@ -253,14 +266,21 @@ class Core {
             }
             else {
                 WaitCondition cond = best->task.currentWait();
-                // defer_ms_ / defer_us_ may have set a Deadline during resume().
-                // Keep it if the coroutine yielded Immediate (legacy shim path).
                 if (cond.type() == WaitCondition::Type::Immediate &&
                     best->wait.type() == WaitCondition::Type::Deadline) {
-                    // defer was called — keep the deadline it set
+                    // defer_ms_/defer_us_ set a deadline — keep it, clear fine remainder
+                    best->fine_us = 0u;
+                }
+                else if (cond.type() == WaitCondition::Type::DelayUs) {
+                    const uint32_t us          = cond.us();
+                    const uint32_t us_per_tick = 1000000u / tick_frequency_hz_;
+                    const uint64_t coarse      = static_cast<uint64_t>(us) / us_per_tick;
+                    best->fine_us              = us - static_cast<uint32_t>(coarse) * us_per_tick;
+                    best->wait                 = WaitCondition::deadline(now + coarse);
                 }
                 else {
-                    best->wait = resolveWaitCondition(cond);
+                    best->fine_us = 0u;
+                    best->wait    = resolveWaitCondition(cond);
                 }
             }
         }
@@ -274,10 +294,11 @@ class Core {
         WaitCondition wait;
         DriverTask    task;
         uint8_t       priority;
+        uint32_t      fine_us;
         bool          ran_this_cycle;
 
         ScheduleEntry(ChipBase* p, WaitCondition w, DriverTask t, uint8_t pr) :
-            peripheral(p), wait(w), task(std::move(t)), priority(pr), ran_this_cycle(false)
+            peripheral(p), wait(w), task(std::move(t)), priority(pr), fine_us(0u), ran_this_cycle(false)
         {
         }
     };
@@ -363,6 +384,7 @@ class Core {
     }
 
     TimerInterface&                               timer_;
+    SpinFn                                        spin_fn_;
     std::atomic<bool>                             pending_;
     std::array<std::atomic<uint32_t>, kMaskWords> isr_pending_{};
     uint32_t                                      tick_frequency_hz_;

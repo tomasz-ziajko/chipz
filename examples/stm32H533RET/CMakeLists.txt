@@ -49,7 +49,7 @@ add_subdirectory(../../port/stm32h5xx port_stm32h5xx)
 # ---------------------------------------------------------------------------
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    Chipz/app.cpp
+    Chipz/demo/demo.cpp
 )
 
 # Link directories setup
@@ -91,7 +91,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     stm32cubemx
     chipz::port_stm32h5xx
     chipz::core
-    chipz::max6675
-    chipz::ds3231
-    chipz::mcp795w
+    chipz::pcf8574
+    chipz::hd44780
 )
