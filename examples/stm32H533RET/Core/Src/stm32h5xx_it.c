@@ -55,7 +55,7 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-
+extern I2C_HandleTypeDef hi2c1;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -211,6 +211,8 @@ void EXTI13_IRQHandler(void)
 
   /* USER CODE END EXTI13_IRQn 1 */
 }
+
+/* I2C1_EV_IRQHandler and I2C1_ER_IRQHandler are defined in chipz_isrs.cpp */
 
 /* USER CODE BEGIN 1 */
 

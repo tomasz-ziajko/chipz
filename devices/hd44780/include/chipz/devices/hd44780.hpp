@@ -37,10 +37,11 @@ namespace devices {
  *                 after writeBuffer() / writeBufferAtPosition() to resume.
  *   Transfer    — each run() advances one nibble/byte phase, suspends on comm.
  *
- * @tparam CommInterface Communication interface type (must support timed transmit)
  */
-template <typename CommInterface>
-class HD44780 : public Chip<CommInterface> {
+class HD44780 : public Chip<CommunicationInterface> {
+    using Parallel     = CommunicationInterface;
+    using Status       = ChipBase::Status;
+
     public:
     enum class DisplaySize {
         Size16x2,
@@ -61,8 +62,8 @@ class HD44780 : public Chip<CommInterface> {
      * @param comm   Interface wired per bus bit layout described above
      * @param config Display geometry and cursor settings
      */
-    HD44780(CommInterface& comm, const Config& config) :
-        Chip<CommInterface>(comm),
+    HD44780(Parallel& comm, const Config& config) :
+        Chip<CommunicationInterface>(comm),
         config_(config),
         status_(ChipBase::Status::Uninitialized),
         transfer_state_(TransferState::Idle),
@@ -104,7 +105,7 @@ class HD44780 : public Chip<CommInterface> {
 
     bool initialize() override
     {
-        if (!this->get<CommInterface>().isReady()) {
+        if (!this->template get<Parallel>().isReady()) {
             status_ = ChipBase::Status::Error;
             return false;
         }
@@ -136,7 +137,7 @@ class HD44780 : public Chip<CommInterface> {
 
     bool isReady() const override
     {
-        return status_ == ChipBase::Status::Ready && this->get<CommInterface>().isReady() && past_init_ &&
+        return status_ == ChipBase::Status::Ready && this->template get<Parallel>().isReady() && past_init_ &&
                !buffer_write_in_progress_;
     }
 
@@ -168,7 +169,7 @@ class HD44780 : public Chip<CommInterface> {
         // Initialization sequence
         handleInitializingState();  // starts first nibble
         while (!past_init_) {
-            co_yield WaitCondition::comm(this->get<CommInterface>());
+            co_yield WaitCondition::comm(this->template get<Parallel>());
             if (!last_transfer_ok_) {
                 while (true) {
                     co_yield WaitCondition::demand();
@@ -185,7 +186,7 @@ class HD44780 : public Chip<CommInterface> {
             }
             handleTransferState();  // kicks off first nibble of first byte
             while (buffer_write_in_progress_ || transfer_state_ != TransferState::Idle) {
-                co_yield WaitCondition::comm(this->get<CommInterface>());
+                co_yield WaitCondition::comm(this->template get<Parallel>());
                 if (!last_transfer_ok_) {
                     break;
                 }
@@ -358,7 +359,7 @@ class HD44780 : public Chip<CommInterface> {
 
     void sendBusValue(uint8_t val, uint32_t duration_us)
     {
-        this->template transmit<CommInterface>(&val, 1u, duration_us);
+        this->template transmit<Parallel>(&val, 1u, duration_us);
     }
 
     /// Start a full byte transfer (high nibble first, 4-bit mode)
