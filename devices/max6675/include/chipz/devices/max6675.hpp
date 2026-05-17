@@ -120,8 +120,8 @@ class MAX6675 : public Chip<CommunicationInterface> {
     ConnectionId connection_id_;
     Status       status_;
     uint32_t     temperature_;
-    bool     connection_open_;
-    bool     last_transfer_ok_;
+    bool         connection_open_;
+    bool         last_transfer_ok_;
 
     static constexpr float    kResolution     = 0.25f;
     static constexpr uint16_t kTransferLength = 2;

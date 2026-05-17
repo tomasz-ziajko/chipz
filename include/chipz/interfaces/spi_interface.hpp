@@ -25,31 +25,20 @@ namespace interfaces {
  * N is the transfer buffer size in bytes — set it to the kMaxTransfer of the
  * largest device on the bus (or std::max(Dev1::kMaxTransfer, Dev2::kMaxTransfer)
  * for shared buses). Buffers live in the object with no heap allocation.
+ *
+ * TransferFn is the type of the SPI transfer callable. Typically a captureless
+ * lambda or function pointer; use partial CTAD to let the compiler deduce it:
+ *   SPIInterface<N>([](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { ... })
  */
-template <size_t N>
+template <size_t N, typename TransferFn>
 class SPIInterface : public CommunicationInterface {
     public:
-    /**
-     * @brief Function pointer type for SPI transfer operation
-     * SPI is full-duplex: transmits and receives simultaneously
-     */
-    using SPITransferFunction = std::function<int(uint8_t* tx_buffer, uint8_t* rx_buffer, uint16_t size)>;
-
-    /**
-     * @brief Function pointer type for chip select control
-     */
     using ChipSelectFunction = std::function<void(bool select)>;
 
-    explicit SPIInterface(SPITransferFunction transfer_func) : CommunicationInterface(), spi_transfer_(transfer_func)
+    explicit SPIInterface(TransferFn transfer_fn) : CommunicationInterface(), spi_transfer_(std::move(transfer_fn))
     {
     }
 
-    /**
-     * @brief Register a device on this SPI bus
-     *
-     * @param cs_func Function to assert/deassert this device's chip-select pin
-     * @return ConnectionId to pass to Chip::setConnection()
-     */
     ConnectionId registerConnection(ChipSelectFunction cs_func)
     {
         ConnectionId id = nextId();
@@ -73,7 +62,7 @@ class SPIInterface : public CommunicationInterface {
 
     bool transmit(const uint8_t* data, size_t length) override
     {
-        if (transfer_in_progress_ || !spi_transfer_) {
+        if (transfer_in_progress_) {
             return false;
         }
 
@@ -104,7 +93,7 @@ class SPIInterface : public CommunicationInterface {
 
     bool receive(uint8_t* /*buffer*/, size_t length) override
     {
-        if (transfer_in_progress_ || !spi_transfer_) {
+        if (transfer_in_progress_) {
             return false;
         }
 
@@ -133,7 +122,7 @@ class SPIInterface : public CommunicationInterface {
 
     bool transfer(const uint8_t* tx_data, uint8_t* rx_data, size_t length)
     {
-        if (transfer_in_progress_ || !spi_transfer_) {
+        if (transfer_in_progress_) {
             return false;
         }
 
@@ -169,7 +158,7 @@ class SPIInterface : public CommunicationInterface {
     }
 
     private:
-    SPITransferFunction             spi_transfer_;
+    TransferFn                      spi_transfer_;
     ChipSelectFunction              active_cs_;
     std::vector<ChipSelectFunction> connections_;
     std::array<uint8_t, N>          tx_buffer_{};

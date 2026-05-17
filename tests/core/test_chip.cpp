@@ -9,30 +9,33 @@
 #include <string>
 
 using namespace chipz;
-using namespace chipz::interfaces;
 
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
 
-static I2CInterface makeI2C()
+static auto makeI2C()
 {
-    return I2CInterface([](uint8_t, uint8_t, uint8_t*, uint16_t) -> int { return 0; },
-                        [](uint8_t, uint8_t, const uint8_t*, uint16_t) -> int { return 0; });
+    return chipz::interfaces::I2CInterface<32>(
+        [](uint8_t, uint8_t, uint8_t*, uint16_t) -> int { return 0; },
+        [](uint8_t, uint8_t, const uint8_t*, uint16_t) -> int { return 0; });
 }
 
-static SPIInterface makeSPI()
+static auto makeSPI()
 {
-    return SPIInterface([](uint8_t*, uint8_t*, uint16_t) -> int { return 0; });
+    return chipz::interfaces::SPIInterface<32>([](uint8_t*, uint8_t*, uint16_t) -> int { return 0; });
 }
+
+using TestI2C = decltype(makeI2C());
+using TestSPI = decltype(makeSPI());
 
 // ----------------------------------------------------------------------------
 // Minimal concrete Chip for testing
 // ----------------------------------------------------------------------------
 
-class TestChip : public Chip<I2CInterface> {
+class TestChip : public Chip<TestI2C> {
     public:
-    explicit TestChip(I2CInterface& i2c) : Chip<I2CInterface>(i2c)
+    explicit TestChip(TestI2C& i2c) : Chip<TestI2C>(i2c)
     {
     }
 
@@ -64,11 +67,11 @@ class TestChip : public Chip<I2CInterface> {
     // Expose protected helpers for testing
     bool doTransmit(const uint8_t* data, size_t len)
     {
-        return transmit<I2CInterface>(data, len);
+        return transmit<TestI2C>(data, len);
     }
     bool doReceive(uint8_t* buf, size_t len)
     {
-        return receive<I2CInterface>(buf, len);
+        return receive<TestI2C>(buf, len);
     }
     void callDeferMs(uint32_t ms)
     {
@@ -118,9 +121,9 @@ class TestChip : public Chip<I2CInterface> {
 };
 
 // Dual-interface chip for testing get<T>() with multiple types
-class DualChip : public Chip<I2CInterface, SPIInterface> {
+class DualChip : public Chip<TestI2C, TestSPI> {
     public:
-    DualChip(I2CInterface& i2c, SPIInterface& spi) : Chip<I2CInterface, SPIInterface>(i2c, spi)
+    DualChip(TestI2C& i2c, TestSPI& spi) : Chip<TestI2C, TestSPI>(i2c, spi)
     {
     }
 
@@ -156,7 +159,6 @@ class DualChip : public Chip<I2CInterface, SPIInterface> {
 
 class ChipBaseRegistryTest : public ::testing::Test {
     protected:
-    // Keep track of count before this test's chips are added
     size_t count_before = ChipBase::getCount();
 };
 
@@ -264,13 +266,13 @@ TEST_F(ChipBaseRegistryTest, GetDefaultPriorityReturns128)
 
 class ChipTest : public ::testing::Test {
     protected:
-    I2CInterface i2c = makeI2C();
-    TestChip     chip{i2c};
+    TestI2C  i2c = makeI2C();
+    TestChip chip{i2c};
 };
 
 TEST_F(ChipTest, GetReturnsReferenceToCorrectInterface)
 {
-    EXPECT_EQ(&chip.get<I2CInterface>(), &i2c);
+    EXPECT_EQ(&chip.get<TestI2C>(), &i2c);
 }
 
 TEST_F(ChipTest, GetCommInterfacesReturnsAllInterfaces)
@@ -339,7 +341,7 @@ TEST_F(ChipTest, SetClaimBusCallbackIsInvokedBeforeReceive)
 TEST_F(ChipTest, TransmitReturnsFalseWhenInterfaceBusy)
 {
     uint8_t data[] = {1};
-    chip.doTransmit(data, 1);  // sets transfer_in_progress_
+    chip.doTransmit(data, 1);
     EXPECT_FALSE(chip.doTransmit(data, 1));
 }
 
@@ -370,15 +372,15 @@ TEST_F(ChipTest, SetDeferCallbacksAreStoredAndCallable)
 
 class DualChipTest : public ::testing::Test {
     protected:
-    I2CInterface i2c = makeI2C();
-    SPIInterface spi = makeSPI();
-    DualChip     chip{i2c, spi};
+    TestI2C  i2c = makeI2C();
+    TestSPI  spi = makeSPI();
+    DualChip chip{i2c, spi};
 };
 
 TEST_F(DualChipTest, GetReturnsCorrectInterfaceForEachType)
 {
-    EXPECT_EQ(&chip.get<I2CInterface>(), &i2c);
-    EXPECT_EQ(&chip.get<SPIInterface>(), &spi);
+    EXPECT_EQ(&chip.get<TestI2C>(), &i2c);
+    EXPECT_EQ(&chip.get<TestSPI>(), &spi);
 }
 
 TEST_F(DualChipTest, GetCommInterfacesReturnsAllTwoInterfaces)
@@ -408,8 +410,6 @@ TEST_F(DualChipTest, SetClaimBusCallbackMatchesCorrectInterface)
     chip.setClaimBusCallback(&i2c, [&] { i2c_claimed = true; });
     chip.setClaimBusCallback(&spi, [&] { spi_claimed = true; });
 
-    // Trigger an interrupt on i2c — only i2c's claim callback path is tested
-    // indirectly through the bus-claiming transmit path
     EXPECT_FALSE(i2c_claimed);
     EXPECT_FALSE(spi_claimed);
 }

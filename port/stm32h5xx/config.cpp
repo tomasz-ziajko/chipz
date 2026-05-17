@@ -93,41 +93,41 @@ __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
 
 #ifdef HAL_I2C_MODULE_ENABLED
 
-chipz::interfaces::I2CInterface g_i2c1{
-    [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Read_IT(&hi2c1, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
-    },
-    [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Write_IT(&hi2c1, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
-                                    const_cast<uint8_t*>(buf), len);
-    }};
+static auto s_i2c1_read = [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
+    return HAL_I2C_Mem_Read_IT(&hi2c1, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+};
+static auto s_i2c1_write = [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
+    return HAL_I2C_Mem_Write_IT(&hi2c1, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
+                                const_cast<uint8_t*>(buf), len);
+};
+chipz::interfaces::I2CInterface<32, decltype(s_i2c1_read), decltype(s_i2c1_write)> g_i2c1{s_i2c1_read, s_i2c1_write};
 
-chipz::interfaces::I2CInterface g_i2c2{
-    [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Read_IT(&hi2c2, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
-    },
-    [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Write_IT(&hi2c2, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
-                                    const_cast<uint8_t*>(buf), len);
-    }};
+static auto s_i2c2_read = [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
+    return HAL_I2C_Mem_Read_IT(&hi2c2, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+};
+static auto s_i2c2_write = [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
+    return HAL_I2C_Mem_Write_IT(&hi2c2, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
+                                const_cast<uint8_t*>(buf), len);
+};
+chipz::interfaces::I2CInterface<32, decltype(s_i2c2_read), decltype(s_i2c2_write)> g_i2c2{s_i2c2_read, s_i2c2_write};
 
-chipz::interfaces::I2CInterface g_i2c3{
-    [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Read_IT(&hi2c3, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
-    },
-    [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Write_IT(&hi2c3, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
-                                    const_cast<uint8_t*>(buf), len);
-    }};
+static auto s_i2c3_read = [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
+    return HAL_I2C_Mem_Read_IT(&hi2c3, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+};
+static auto s_i2c3_write = [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
+    return HAL_I2C_Mem_Write_IT(&hi2c3, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
+                                const_cast<uint8_t*>(buf), len);
+};
+chipz::interfaces::I2CInterface<32, decltype(s_i2c3_read), decltype(s_i2c3_write)> g_i2c3{s_i2c3_read, s_i2c3_write};
 
-chipz::interfaces::I2CInterface g_i2c4{
-    [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Read_IT(&hi2c4, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
-    },
-    [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
-        return HAL_I2C_Mem_Write_IT(&hi2c4, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
-                                    const_cast<uint8_t*>(buf), len);
-    }};
+static auto s_i2c4_read = [](uint8_t dev, uint8_t reg, uint8_t* buf, uint16_t len) -> int {
+    return HAL_I2C_Mem_Read_IT(&hi2c4, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT, buf, len);
+};
+static auto s_i2c4_write = [](uint8_t dev, uint8_t reg, const uint8_t* buf, uint16_t len) -> int {
+    return HAL_I2C_Mem_Write_IT(&hi2c4, static_cast<uint16_t>(dev) << 1, reg, I2C_MEMADD_SIZE_8BIT,
+                                const_cast<uint8_t*>(buf), len);
+};
+chipz::interfaces::I2CInterface<32, decltype(s_i2c4_read), decltype(s_i2c4_write)> g_i2c4{s_i2c4_read, s_i2c4_write};
 
 #endif  // HAL_I2C_MODULE_ENABLED
 
@@ -137,17 +137,25 @@ chipz::interfaces::I2CInterface g_i2c4{
 
 #ifdef HAL_SPI_MODULE_ENABLED
 
-chipz::interfaces::SPIInterface g_spi1{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi1, tx, rx, len); }};
+static auto s_spi1_transfer = [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
+    return HAL_SPI_TransmitReceive_IT(&hspi1, tx, rx, len);
+};
+chipz::interfaces::SPIInterface<32, decltype(s_spi1_transfer)> g_spi1{s_spi1_transfer};
 
-chipz::interfaces::SPIInterface g_spi2{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len); }};
+static auto s_spi2_transfer = [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
+    return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len);
+};
+chipz::interfaces::SPIInterface<32, decltype(s_spi2_transfer)> g_spi2{s_spi2_transfer};
 
-chipz::interfaces::SPIInterface g_spi3{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi3, tx, rx, len); }};
+static auto s_spi3_transfer = [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
+    return HAL_SPI_TransmitReceive_IT(&hspi3, tx, rx, len);
+};
+chipz::interfaces::SPIInterface<32, decltype(s_spi3_transfer)> g_spi3{s_spi3_transfer};
 
-chipz::interfaces::SPIInterface g_spi4{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi4, tx, rx, len); }};
+static auto s_spi4_transfer = [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
+    return HAL_SPI_TransmitReceive_IT(&hspi4, tx, rx, len);
+};
+chipz::interfaces::SPIInterface<32, decltype(s_spi4_transfer)> g_spi4{s_spi4_transfer};
 
 #endif  // HAL_SPI_MODULE_ENABLED
 

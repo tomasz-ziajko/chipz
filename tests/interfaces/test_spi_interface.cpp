@@ -6,7 +6,6 @@
 #include <chipz/interfaces/spi_interface.hpp>
 #include <vector>
 
-using namespace chipz::interfaces;
 using chipz::CommunicationInterface;
 
 class SPIInterfaceTest : public ::testing::Test {
@@ -19,9 +18,10 @@ class SPIInterfaceTest : public ::testing::Test {
     std::vector<TransferCall> transfer_calls;
     int                       transfer_return = 0;
 
-    SPIInterface makeSPI()
+    auto makeSPI()
     {
-        return SPIInterface([this](uint8_t* tx, uint8_t* rx, uint16_t size) -> int {
+        return chipz::interfaces::SPIInterface<32>([this](uint8_t* tx, uint8_t* rx, uint16_t size) -> int {
+            (void)rx;
             transfer_calls.push_back({{tx, tx + size}, size});
             return transfer_return;
         });
@@ -105,7 +105,7 @@ TEST_F(SPIInterfaceTest, ReceiveSendsZeroBytesAsDummy)
 
 TEST_F(SPIInterfaceTest, ReceiveCopiesRxDataToCallerBuffer)
 {
-    SPIInterface spi([](uint8_t*, uint8_t* rx, uint16_t size) -> int {
+    auto spi = chipz::interfaces::SPIInterface<32>([](uint8_t*, uint8_t* rx, uint16_t size) -> int {
         for (uint16_t i = 0; i < size; ++i) {
             rx[i] = static_cast<uint8_t>(i + 0x10);
         }
@@ -139,7 +139,7 @@ TEST_F(SPIInterfaceTest, ReceiveReturnsFalseAndSignalsErrorOnTransferFailure)
 
 TEST_F(SPIInterfaceTest, TransferSendsAndReceivesSimultaneously)
 {
-    SPIInterface spi([](uint8_t* tx, uint8_t* rx, uint16_t size) -> int {
+    auto spi = chipz::interfaces::SPIInterface<32>([](uint8_t* tx, uint8_t* rx, uint16_t size) -> int {
         for (uint16_t i = 0; i < size; ++i) {
             rx[i] = static_cast<uint8_t>(tx[i] ^ 0xFF);
         }

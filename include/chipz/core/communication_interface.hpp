@@ -49,7 +49,7 @@ class CommunicationInterface {
     virtual uint8_t* getTxBuffer() = 0;
     virtual uint8_t* getRxBuffer() = 0;
 
-    virtual bool transmit(const uint8_t* data, size_t length)          = 0;
+    virtual bool transmit(const uint8_t* data, size_t length) = 0;
     virtual bool transmit(const uint8_t* data, size_t length, uint32_t duration_us)
     {
         (void)duration_us;

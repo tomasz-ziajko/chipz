@@ -21,20 +21,19 @@ namespace interfaces {
  *
  * N is the transfer buffer size in bytes — set it to the kMaxTransfer of the
  * largest device on the bus. Buffers live in the object with no heap allocation.
+ *
+ * ReadFn / WriteFn are the types of the I2C read/write callables. Typically
+ * captureless lambdas or function pointers; use partial CTAD to deduce them:
+ *   I2CInterface<N>(read_lambda, write_lambda)
  */
-template <size_t N>
+template <size_t N, typename ReadFn, typename WriteFn>
 class I2CInterface : public CommunicationInterface {
     public:
-    using I2CReadFunction =
-        std::function<int(uint8_t device_address, uint8_t mem_address, uint8_t* data, uint16_t size)>;
-    using I2CWriteFunction =
-        std::function<int(uint8_t device_address, uint8_t mem_address, const uint8_t* data, uint16_t size)>;
-
-    I2CInterface(I2CReadFunction read_func, I2CWriteFunction write_func) :
+    I2CInterface(ReadFn read_fn, WriteFn write_fn) :
         CommunicationInterface(),
         device_address_(0),
-        i2c_read_(read_func),
-        i2c_write_(write_func),
+        i2c_read_(std::move(read_fn)),
+        i2c_write_(std::move(write_fn)),
         current_mem_address_(0)
     {
     }
@@ -67,7 +66,7 @@ class I2CInterface : public CommunicationInterface {
 
     bool transmit(const uint8_t* data, size_t length) override
     {
-        if (transfer_in_progress_ || !i2c_write_) {
+        if (transfer_in_progress_) {
             return false;
         }
 
@@ -92,7 +91,7 @@ class I2CInterface : public CommunicationInterface {
 
     bool receive(uint8_t* /*buffer*/, size_t length) override
     {
-        if (transfer_in_progress_ || !i2c_read_) {
+        if (transfer_in_progress_) {
             return false;
         }
 
@@ -124,11 +123,11 @@ class I2CInterface : public CommunicationInterface {
     }
 
     private:
-    uint8_t              device_address_;
-    I2CReadFunction      i2c_read_;
-    I2CWriteFunction     i2c_write_;
-    uint8_t              current_mem_address_;
-    std::vector<uint8_t> connections_;
+    uint8_t                device_address_;
+    ReadFn                 i2c_read_;
+    WriteFn                i2c_write_;
+    uint8_t                current_mem_address_;
+    std::vector<uint8_t>   connections_;
     std::array<uint8_t, N> tx_buffer_{};
     std::array<uint8_t, N> rx_buffer_{};
 };

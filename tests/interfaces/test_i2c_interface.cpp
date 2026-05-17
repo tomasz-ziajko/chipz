@@ -6,7 +6,6 @@
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <vector>
 
-using namespace chipz::interfaces;
 using chipz::CommunicationInterface;
 
 class I2CInterfaceTest : public ::testing::Test {
@@ -28,9 +27,9 @@ class I2CInterfaceTest : public ::testing::Test {
     int                    write_return = 0;
     int                    read_return  = 0;
 
-    I2CInterface makeI2C()
+    auto makeI2C()
     {
-        return I2CInterface(
+        return chipz::interfaces::I2CInterface<32>(
             [this](uint8_t dev, uint8_t mem, uint8_t* data, uint16_t size) -> int {
                 read_calls.push_back({dev, mem, size, data});
                 return read_return;
@@ -119,14 +118,14 @@ TEST_F(I2CInterfaceTest, ReceivePassesInternalRxBufferToHAL)
 
 TEST_F(I2CInterfaceTest, ReceiveCopiesRxBufferToCallerBuffer)
 {
-    I2CInterface i2c(
+    auto i2c = chipz::interfaces::I2CInterface<32>(
         [](uint8_t, uint8_t, uint8_t* data, uint16_t size) -> int {
             for (uint16_t i = 0; i < size; ++i) {
                 data[i] = static_cast<uint8_t>(i + 1);
             }
             return 0;
         },
-        nullptr);
+        [](uint8_t, uint8_t, const uint8_t*, uint16_t) -> int { return 0; });
 
     uint8_t buf[3] = {};
     i2c.receive(buf, 3);

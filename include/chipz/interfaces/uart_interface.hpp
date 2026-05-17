@@ -39,10 +39,7 @@ class UARTInterface : public CommunicationInterface {
     using UARTReceiveFunction  = std::function<int(uint8_t* buffer, uint16_t size)>;
 
     UARTInterface(UARTTransmitFunction tx_func, UARTReceiveFunction rx_func) :
-        CommunicationInterface(),
-        uart_tx_(std::move(tx_func)),
-        uart_rx_(std::move(rx_func)),
-        rx_in_progress_(false)
+        CommunicationInterface(), uart_tx_(std::move(tx_func)), uart_rx_(std::move(rx_func)), rx_in_progress_(false)
     {
     }
 

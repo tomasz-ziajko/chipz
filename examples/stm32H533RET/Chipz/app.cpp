@@ -21,7 +21,10 @@
 
 #include <chipz/core/core.hpp>
 #include <chipz/core/timer_interface.hpp>
+#include <chipz/devices/ds3231.hpp>
 #include <chipz/devices/max6675.hpp>
+#include <chipz/devices/mcp795w.hpp>
+#include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 
 #include "irq.hpp"
@@ -80,25 +83,48 @@ class SysTickTimer final : public chipz::TimerInterface {
 
 extern "C" {
 __attribute__((weak)) extern SPI_HandleTypeDef hspi2;
+__attribute__((weak)) extern I2C_HandleTypeDef hi2c2;
 }
 
 // ---------------------------------------------------------------------------
 // chipz objects
 // ---------------------------------------------------------------------------
 
-using SPI2Type = chipz::interfaces::SPIInterface<chipz::devices::MAX6675::kMaxTransfer>;
+constexpr size_t kSpi2BufferSize =
+    std::max(chipz::devices::MAX6675::kMaxTransfer, chipz::devices::MCP795W::kMaxTransfer);
+constexpr size_t kI2c2BufferSize = chipz::devices::DS3231::kMaxTransfer;
 
-SPI2Type g_spi2{
-    [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int { return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len); }};
+static auto s_spi2_transfer = [](uint8_t* tx, uint8_t* rx, uint16_t len) -> int {
+    return HAL_SPI_TransmitReceive_IT(&hspi2, tx, rx, len);
+};
+static auto s_i2c2_read = [](uint8_t dev, uint8_t mem, uint8_t* data, uint16_t len) -> int {
+    return HAL_I2C_Mem_Read_IT(&hi2c2, dev, mem, I2C_MEMADD_SIZE_8BIT, data, len);
+};
+static auto s_i2c2_write = [](uint8_t dev, uint8_t mem, const uint8_t* data, uint16_t len) -> int {
+    return HAL_I2C_Mem_Write_IT(&hi2c2, dev, mem, I2C_MEMADD_SIZE_8BIT, const_cast<uint8_t*>(data), len);
+};
 
-// Override the weak pointer in chipz_isrs.cpp — ISR callbacks route through this
+using SPI2Type = chipz::interfaces::SPIInterface<kSpi2BufferSize, decltype(s_spi2_transfer)>;
+using I2C2Type = chipz::interfaces::I2CInterface<kI2c2BufferSize, decltype(s_i2c2_read), decltype(s_i2c2_write)>;
+
+SPI2Type g_spi2{s_spi2_transfer};
+I2C2Type g_i2c2{s_i2c2_read, s_i2c2_write};
+
+// Override the weak pointers in chipz_isrs.cpp — ISR callbacks route through these
 chipz::CommunicationInterface* g_spi2_iface = &g_spi2;
+chipz::CommunicationInterface* g_i2c2_iface = &g_i2c2;
 
 SysTickTimer                             g_systick_timer;
 chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_systick_timer};
 
 auto                    g_max6675_conn = g_spi2.registerConnection([](bool) {});
 chipz::devices::MAX6675 g_max6675{g_spi2, g_max6675_conn};
+
+auto                    g_mcp795w_conn = g_spi2.registerConnection([](bool) {});
+chipz::devices::MCP795W g_mcp795w{g_spi2, g_mcp795w_conn};
+
+auto                   g_ds3231_conn = g_i2c2.registerConnection(chipz::devices::DS3231::I2C_ADDRESS);
+chipz::devices::DS3231 g_ds3231{g_i2c2, g_ds3231_conn};
 
 // ---------------------------------------------------------------------------
 // SysTick bridge — called from SysTick_Handler in chipz_isrs.cpp
@@ -116,6 +142,8 @@ extern "C" void chipz_systick_tick()
 extern "C" void chipz_app_init()
 {
     g_core.add(g_max6675);
+    g_core.add(g_mcp795w);
+    g_core.add(g_ds3231);
     g_core.initialize();
 }
 
@@ -127,7 +155,7 @@ extern "C" void chipz_app_run()
     static uint32_t tick = 0;
     if (++tick == 3000u) {
         volatile uint32_t* null_ptr = nullptr;
-        *null_ptr = 0xDEAD'BEEFu;
+        *null_ptr                   = 0xDEAD'BEEFu;
     }
 
     g_core.service();

@@ -92,4 +92,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
     chipz::port_stm32h5xx
     chipz::core
     chipz::max6675
+    chipz::ds3231
+    chipz::mcp795w
 )

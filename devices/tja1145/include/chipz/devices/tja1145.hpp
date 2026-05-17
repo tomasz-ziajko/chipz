@@ -324,8 +324,8 @@ class TJA1145 : public Chip<CommunicationInterface> {
     private:
     ConnectionId connection_id_;
     Status       status_;
-    State  state_;
-    Config config_;
+    State        state_;
+    Config       config_;
 
     enum class SpiOp {
         None,

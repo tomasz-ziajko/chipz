@@ -37,8 +37,7 @@ class MCP795W : public Chip<CommunicationInterface> {
     public:
     static constexpr size_t kMaxTransfer = 11;
 
-    MCP795W(SPI& comm, ConnectionId connection_id,
-            std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
+    MCP795W(SPI& comm, ConnectionId connection_id, std::function<uint8_t()> get_spi_transmission_disabled = nullptr) :
         Chip<SPI>(comm),
         connection_id_(connection_id),
         status_(Status::Uninitialized),
