@@ -61,7 +61,7 @@ static void MX_I2C2_Init(void);
 static void MX_SPI2_Init(void);
 /* USER CODE BEGIN PFP */
 void chipz_app_init(void);
-void chipz_app_run(void);
+void demo_app_run(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -131,7 +131,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    chipz_app_run();
+    demo_app_run();
   }
   /* USER CODE END 3 */
 }

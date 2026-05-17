@@ -3,7 +3,7 @@
 // Commercial license available — see README
 
 /**
- * @file app.cpp
+ * @file demo.cpp
  * @brief chipz application entry points for the NUCLEO-H533RE example
  *
  * Wires up an HD44780 LCD (20×4) via a PCF8574 I2C GPIO expander on I2C1.
@@ -14,7 +14,7 @@
  *
  * Entry points called from main.c:
  *   chipz_app_init() — registers peripherals, initialises Core
- *   chipz_app_run()  — called each iteration of the main loop; runs service()
+ *   demo_app_run()   — called each iteration of the main loop; runs service()
  */
 
 #include <chipz/core/core.hpp>
@@ -119,14 +119,52 @@ extern "C" void chipz_app_init()
     g_core.initialize();
 }
 
-extern "C" void chipz_app_run()
+extern "C" void demo_app_run()
 {
-    static bool hello_sent = false;
-    if (!hello_sent && g_hd44780.isReady()) {
-        static const char msg[] = "Hello World!";
-        g_hd44780.writeBufferAtPosition(msg, 0, sizeof(msg) - 1);
+    static bool     initialized     = false;
+    static bool     hw_visible      = false;
+    static uint8_t  demo_line       = 0;   // 0=line2, 1=line3, 2=line4
+    static bool     demo_need_clear = false;
+    static uint16_t demo_clear_pos  = 0;
+    static uint32_t hw_deadline     = 0;
+    static uint32_t demo_deadline   = 0;
+
+    static const char hello[]  = "Hello World! ";
+    static const char clear1[] = "             ";  // 13 spaces — matches hello length
+    static const char chipz[]  = "CHIPZ demo code!";
+    static const char clear2[] = "                ";  // 16 spaces — matches chipz length
+
+    if (!initialized && g_hd44780.isReady()) {
+        uint32_t now  = HAL_GetTick();
+        hw_deadline   = now + 3000;
+        demo_deadline = now + 2000;
+        g_hd44780.writeBufferAtPosition(chipz, 20, 16);
         g_core.wake(g_hd44780);
-        hello_sent = true;
+        initialized = true;
+    }
+
+    if (initialized && g_hd44780.isReady()) {
+        uint32_t now = HAL_GetTick();
+
+        if (demo_need_clear) {
+            g_hd44780.writeBufferAtPosition(clear2, demo_clear_pos, 16);
+            g_core.wake(g_hd44780);
+            demo_need_clear = false;
+        }
+        else if (static_cast<int32_t>(now - hw_deadline) >= 0) {
+            hw_deadline += 3000;
+            hw_visible = !hw_visible;
+            g_hd44780.writeBufferAtPosition(hw_visible ? hello : clear1, 0, 13);
+            g_core.wake(g_hd44780);
+        }
+        else if (static_cast<int32_t>(now - demo_deadline) >= 0) {
+            demo_deadline += 2000;
+            demo_clear_pos = 20u + static_cast<uint16_t>(demo_line) * 20u;
+            demo_line      = (demo_line + 1u) % 3u;
+            g_hd44780.writeBufferAtPosition(chipz, 20u + static_cast<uint16_t>(demo_line) * 20u, 16);
+            g_core.wake(g_hd44780);
+            demo_need_clear = true;
+        }
     }
 
     g_core.service();

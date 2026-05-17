@@ -334,7 +334,11 @@ void FDCAN2_IT1_IRQHandler()
 
 extern "C" void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef* h)
 {
-    if (&hi2c1 && h == &hi2c1 && g_i2c1_iface) { g_i2c1_iface->notifyTransferComplete(true); return; }
+    if (&hi2c1 && h == &hi2c1 && g_i2c1_iface) 
+    {
+        g_i2c1_iface->notifyTransferComplete(true); 
+        return;
+    }
     if (&hi2c2 && h == &hi2c2 && g_i2c2_iface) { g_i2c2_iface->notifyTransferComplete(true); return; }
     if (&hi2c3 && h == &hi2c3 && g_i2c3_iface) { g_i2c3_iface->notifyTransferComplete(true); return; }
 }

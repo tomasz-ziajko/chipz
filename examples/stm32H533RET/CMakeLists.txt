@@ -49,7 +49,7 @@ add_subdirectory(../../port/stm32h5xx port_stm32h5xx)
 # ---------------------------------------------------------------------------
 
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
-    Chipz/app.cpp
+    Chipz/demo/demo.cpp
 )
 
 # Link directories setup

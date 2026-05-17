@@ -25,10 +25,12 @@ namespace devices {
  *   - I2C expander + ExternalCompletionSource: driver waits for each I2C transaction
  *   - Both combined: barrier fires when the slower of the two completes
  *
- * Expected bus bit layout (ParallelInterface<6> or equivalent):
- *   bits [3:0]  D4–D7 (nibble data, high nibble transmitted first)
- *   bit  4      RS    (0 = command register, 1 = character data)
- *   bit  5      E     (enable; HD44780 latches data on falling edge)
+ * Bus byte layout matches PCF8574 pin mapping:
+ *   bit 0  RS    (0 = command register, 1 = character data)
+ *   bit 1  RW    (always 0, write-only)
+ *   bit 2  E     (enable; HD44780 latches data on falling edge)
+ *   bit 3  BL    (backlight, always 1)
+ *   bits [7:4]  D4–D7 (nibble data, high nibble transmitted first)
  *
  * Scheduling:
  *   Uninit      — first run() returns delayMs(DELAY_INIT_MS) for power-on settle.
@@ -176,6 +178,13 @@ class HD44780 : public Chip<CommunicationInterface> {
                 }
             }
             handleInitializingState();
+            // CMD_CLEAR_DISPLAY / RETURN_HOME require 1.52ms to execute internally.
+            // handleInitializingState() returns without starting the next step for
+            // these commands; insert the required delay then kick off the next step.
+            if (transfer_state_ == TransferState::Idle && !past_init_) {
+                co_yield WaitCondition::delayUs(DELAY_CLEAR_US);
+                handleInitializingState();
+            }
         }
 
         // Main loop: demand until writeBuffer/writeBufferAtPosition, then drive transfer
@@ -272,7 +281,7 @@ class HD44780 : public Chip<CommunicationInterface> {
     /// E=0 hold + normal command execution time (min 37 µs; 50 µs with margin)
     static constexpr uint32_t DELAY_E_LOW_US = 50;
 
-    /// Clear Display / Return Home execution time (min 1.52 ms)
+    /// Clear Display / Return Home execution time (min 1.52 ms; 2 ms with margin)
     static constexpr uint32_t DELAY_CLEAR_US = 2000;
 
     // -------------------------------------------------------------------------
@@ -345,16 +354,11 @@ class HD44780 : public Chip<CommunicationInterface> {
     // Bus helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * @brief Pack nibble, RS, and E flag into the 6-bit bus value
-     *
-     *   bits [3:0] = nibble (D4–D7)
-     *   bit  4     = RS
-     *   bit  5     = E
-     */
+    /// Pack nibble, RS, and E into a PCF8574 output byte (P0=RS, P2=E, P3=BL, P4-P7=D4-D7)
     static constexpr uint8_t busVal(uint8_t nibble, bool rs, bool e) noexcept
     {
-        return (nibble & 0x0Fu) | (rs ? 0x10u : 0u) | (e ? 0x20u : 0u);
+        // PCF8574: P0=RS, P1=RW(0), P2=E, P3=BL(1), P4-P7=D4-D7
+        return (rs ? 0x01u : 0u) | (e ? 0x04u : 0u) | 0x08u | ((nibble & 0x0Fu) << 4);
     }
 
     void sendBusValue(uint8_t val, uint32_t duration_us)
@@ -443,6 +447,11 @@ class HD44780 : public Chip<CommunicationInterface> {
                 return;
             }
             init_step_++;
+            // These commands need a scheduler delay before the next step starts.
+            // Return here so run() can co_yield delayUs before calling us again.
+            if (current_byte_ == CMD_CLEAR_DISPLAY || current_byte_ == CMD_RETURN_HOME) {
+                return;
+            }
         }
         handleInitStep();
     }
