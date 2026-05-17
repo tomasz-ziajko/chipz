@@ -23,60 +23,21 @@
 #include <chipz/devices/pcf8574.hpp>
 
 #include "irq.hpp"
+#include "spin.hpp"
 #include "stm32h5xx_hal.h"
+#include "tim6_timer.hpp"
 
 using chipz::port::stm32h5xx::IRQn;
 using chipz::port::stm32h5xx::kIRQnFirst;
 using chipz::port::stm32h5xx::kIRQnLast;
 
 // ---------------------------------------------------------------------------
-// SysTickTimer — concrete TimerInterface backed by HAL_GetTick() (1 ms tick)
-// ---------------------------------------------------------------------------
-
-class SysTickTimer final : public chipz::TimerInterface {
-    public:
-    void schedule(uint64_t ticks_from_now) override
-    {
-        deadline_ = static_cast<uint64_t>(HAL_GetTick()) + ticks_from_now;
-        armed_    = true;
-    }
-
-    void cancel() override
-    {
-        armed_ = false;
-    }
-
-    uint64_t getCurrentTick() const override
-    {
-        return static_cast<uint64_t>(HAL_GetTick());
-    }
-
-    uint32_t getTickFrequencyHz() const override
-    {
-        return 1000u;
-    }
-
-    void onSysTick()
-    {
-        if (armed_ && static_cast<uint64_t>(HAL_GetTick()) >= deadline_) {
-            armed_ = false;
-            if (on_elapsed_) {
-                on_elapsed_();
-            }
-        }
-    }
-
-    private:
-    uint64_t deadline_ = 0;
-    bool     armed_    = false;
-};
-
-// ---------------------------------------------------------------------------
-// HAL handle — defined by CubeMX; extern declared here
+// HAL handles — defined by CubeMX; extern declared here
 // ---------------------------------------------------------------------------
 
 extern "C" {
-__attribute__((weak)) extern I2C_HandleTypeDef hi2c1;
+__attribute__((weak)) extern I2C_HandleTypeDef  hi2c1;
+__attribute__((weak)) extern TIM_HandleTypeDef  htim6;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,18 +56,18 @@ PCF8574IfaceType g_pcf8574_iface{s_i2c1_pcf_write};
 // Route I2C1 ISR callbacks to g_pcf8574_iface
 chipz::CommunicationInterface* g_i2c1_iface = &g_pcf8574_iface;
 
-SysTickTimer                             g_systick_timer;
-chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_systick_timer};
+chipz::port::stm32h5xx::TIM6Timer        g_tim6_timer{htim6};
+chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_tim6_timer, chipz::port::stm32h5xx::spinUs};
 
 chipz::devices::HD44780 g_hd44780{g_pcf8574_iface, {chipz::devices::HD44780::DisplaySize::Size20x4, false, false}};
 
 // ---------------------------------------------------------------------------
-// SysTick bridge — called from SysTick_Handler in chipz_isrs.cpp
+// TIM6 bridge — called from HAL_TIM_PeriodElapsedCallback in chipz_isrs.cpp
 // ---------------------------------------------------------------------------
 
-extern "C" void chipz_systick_tick()
+extern "C" void chipz_tim6_elapsed()
 {
-    g_systick_timer.onSysTick();
+    g_tim6_timer.onElapsed();
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +76,7 @@ extern "C" void chipz_systick_tick()
 
 extern "C" void chipz_app_init()
 {
+    chipz::port::stm32h5xx::initDwt();
     g_core.add(g_hd44780);
     g_core.initialize();
 }

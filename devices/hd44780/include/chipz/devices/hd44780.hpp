@@ -281,7 +281,8 @@ class HD44780 : public Chip<CommunicationInterface> {
     /// E=0 hold + normal command execution time (min 37 µs; 50 µs with margin)
     static constexpr uint32_t DELAY_E_LOW_US = 50;
 
-    /// Clear Display / Return Home execution time (min 1.52 ms; 2 ms with margin)
+    /// Clear Display / Return Home execution time (min 1.52 ms; 3 ms to cover
+    /// 1 ms tick granularity — worst-case under-run with a 1 kHz SysTick is ~1 ms)
     static constexpr uint32_t DELAY_CLEAR_US = 2000;
 
     // -------------------------------------------------------------------------

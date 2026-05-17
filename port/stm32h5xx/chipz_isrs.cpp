@@ -31,8 +31,13 @@
  *
  * SysTick
  * -------
- * SysTick_Handler calls HAL_IncTick() (required by HAL timeout machinery) and
- * chipz_systick_tick() (application-defined, calls SysTickTimer::onSysTick()).
+ * SysTick_Handler calls only HAL_IncTick() (required by HAL timeout machinery).
+ * chipz scheduling is driven by TIM6 (one-shot) and comm/EXTI ISRs — not SysTick.
+ *
+ * TIM6
+ * ----
+ * HAL_TIM_PeriodElapsedCallback routes TIM6 update events to chipz_tim6_elapsed(),
+ * which the application defines to call TIM6Timer::onElapsed().
  */
 
 #include <chipz/core/communication_interface.hpp>
@@ -51,7 +56,6 @@ using chipz::port::stm32h5xx::kIRQnLast;
 // ---------------------------------------------------------------------------
 
 extern chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core;
-extern "C" void                                 chipz_systick_tick();
 
 // HAL handles — __weak so that undefined instances resolve to address 0
 extern "C" {
@@ -78,6 +82,10 @@ __attribute__((weak)) extern UART_HandleTypeDef huart4;
 #ifdef HAL_FDCAN_MODULE_ENABLED
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan1;
 __attribute__((weak)) extern FDCAN_HandleTypeDef hfdcan2;
+#endif
+
+#ifdef HAL_TIM_MODULE_ENABLED
+__attribute__((weak)) extern TIM_HandleTypeDef htim6;
 #endif
 }
 
@@ -136,7 +144,6 @@ void PendSV_Handler()
 void SysTick_Handler()
 {
     HAL_IncTick();
-    chipz_systick_tick();
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +331,29 @@ void FDCAN2_IT1_IRQHandler()
 }
 #endif
 
+// ---------------------------------------------------------------------------
+// TIM6 one-shot — routes update interrupt to HAL, then notifies chipz
+// ---------------------------------------------------------------------------
+
+#ifdef HAL_TIM_MODULE_ENABLED
+void TIM6_IRQHandler()
+{
+    HAL_TIM_IRQHandler(&htim6);
+}
+#endif
+
+__attribute__((weak)) void chipz_tim6_elapsed() {}
+
 }  // extern "C"
+
+#ifdef HAL_TIM_MODULE_ENABLED
+extern "C" void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
+{
+    if (htim->Instance == TIM6) {
+        chipz_tim6_elapsed();
+    }
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // HAL I2C weak callback overrides
