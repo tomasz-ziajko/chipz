@@ -41,7 +41,8 @@ Legacy drivers that override `main()` instead of `run()` continue to work — th
 | MAX6675  | SPI      | K-type thermocouple-to-digital converter  |
 | MCP795W  | SPI      | RTC with SRAM and battery switchover      |
 | TJA1145  | SPI      | Automotive CAN transceiver                |
-| HD44780  | GPIO/SPI | Character LCD controller                  |
+| PCF8574  | I2C      | 8-bit I2C GPIO expander                   |
+| HD44780  | Parallel | Character LCD controller (4-bit mode)     |
 
 ## Requirements
 
@@ -79,6 +80,8 @@ target_sources(my_app PRIVATE
 #include <chipz/interfaces/i2c_interface.hpp>
 #include <chipz/interfaces/spi_interface.hpp>
 #include "port/stm32h5xx/irq.hpp"
+#include "port/stm32h5xx/spin.hpp"
+#include "port/stm32h5xx/tim6_timer.hpp"
 #include "stm32h5xx_hal.h"
 
 using chipz::port::stm32h5xx::IRQn;
@@ -87,16 +90,18 @@ using chipz::port::stm32h5xx::kIRQnLast;
 
 extern chipz::interfaces::I2CInterface g_i2c1;
 extern chipz::interfaces::SPIInterface g_spi2;
+extern TIM_HandleTypeDef htim6;
 
-class SysTickTimer final : public chipz::TimerInterface { /* ... */ };
+chipz::port::stm32h5xx::TIM6Timer        g_tim6_timer{htim6};
+chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_tim6_timer, chipz::port::stm32h5xx::spinUs};
 
-SysTickTimer g_systick_timer;
-chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_systick_timer};
+chipz::devices::DS3231  g_ds3231 {g_i2c1};
+chipz::devices::MAX6675 g_max6675{g_spi2};
 
-chipz::devices::DS3231  g_ds3231 {g_i2c1, []() -> uint32_t { return HAL_GetTick(); }};
-chipz::devices::MAX6675 g_max6675{g_spi2, []() -> uint32_t { return HAL_GetTick(); }};
+extern "C" void chipz_tim6_elapsed() { g_tim6_timer.onElapsed(); }
 
 extern "C" void chipz_app_init() {
+    chipz::port::stm32h5xx::initDwt();
     g_core.add(g_ds3231);
     g_core.add(g_max6675);
     g_core.initialize();
@@ -176,9 +181,15 @@ bool main() override {
 | File                | Provides |
 |---------------------|----------|
 | `config.cpp`        | `g_i2c1`–`g_i2c4`, `g_spi1`–`g_spi4`, `g_uart1`–`g_uart4`, `g_can1`/`g_can2` wrapping HAL IT functions |
-| `chipz_isrs.cpp`    | All ISR handlers, SysTick, EXTI0–15, and HAL weak callback overrides for I2C/SPI/UART/FDCAN |
+| `chipz_isrs.cpp`    | All ISR handlers, SysTick, EXTI0–15, TIM6, and HAL weak callback overrides for I2C/SPI/UART/FDCAN/TIM |
 | `fault_handlers.cpp`| HardFault, BusFault, MemManage, UsageFault with diagnostic register dumps |
 | `irq.hpp`           | `IRQn` enum mirroring CMSIS `IRQn_Type`; `kIRQnFirst`/`kIRQnLast` for `Core<>` template parameters |
+| `tim6_timer.hpp`    | `TIM6Timer : TimerInterface` — one-shot TIM6 for coarse ms deadline scheduling |
+| `spin.hpp`          | `initDwt()` / `spinUs(us)` — DWT CYCCNT busy-spin for sub-ms fine delays |
+
+### Hybrid TIM6 + DWT scheduling
+
+`Core` accepts an optional `SpinFn` (`void(*)(uint32_t us)`) as its second constructor argument. When a driver `co_yield`s `WaitCondition::delayUs(N)`, Core splits N into a coarse millisecond part (scheduled on TIM6) and a sub-millisecond remainder. The remainder is spun via `spinUs` immediately before `task.resume()`, giving precise timing without wasting CPU on a polling loop. Pass `chipz::port::stm32h5xx::spinUs` to enable this on STM32H5xx.
 
 HAL handles not initialized in your project (e.g. `hi2c3` when only I2C1 is used) are declared `__attribute__((weak))` so they resolve to null at link time without error.
 
@@ -291,15 +302,19 @@ chipz/
 │   ├── hd44780/include/chipz/devices/hd44780.hpp
 │   ├── max6675/include/chipz/devices/max6675.hpp
 │   ├── mcp795w/include/chipz/devices/mcp795w.hpp
+│   ├── pcf8574/include/chipz/devices/pcf8574.hpp
 │   └── tja1145/include/chipz/devices/tja1145.hpp
 ├── port/
 │   └── stm32h5xx/
 │       ├── config.cpp
 │       ├── chipz_isrs.cpp
 │       ├── fault_handlers.cpp
-│       └── irq.hpp
+│       ├── irq.hpp
+│       ├── spin.hpp             # DWT CYCCNT busy-spin (initDwt / spinUs)
+│       └── tim6_timer.hpp      # TIM6Timer : TimerInterface
 ├── examples/
-│   └── stm32H533RET/           # NUCLEO-H533RE: DS3231 (I2C1) + MAX6675 (SPI2)
+│   └── stm32H533RET/           # NUCLEO-H533RE: PCF8574 + HD44780 (I2C1, 20×4 LCD)
+│       ├── Chipz/demo/demo.cpp # Application entry points
 │       └── fault_monitor.toml  # OpenOCD crash capture config for this example
 ├── tools/
 │   ├── fault_decoder.py        # Decodes a FaultInfo dump (binary / GDB / hex input)
@@ -316,12 +331,13 @@ chipz/
 | `chipz::max6675` | MAX6675 driver                     |
 | `chipz::mcp795w` | MCP795W driver                     |
 | `chipz::tja1145` | TJA1145 driver                     |
+| `chipz::pcf8574` | PCF8574 driver                     |
 | `chipz::hd44780` | HD44780 driver                     |
 | `chipz::chipz`   | Umbrella — links all of the above  |
 
 ## Known Issues / TODO
 
-- **Test coverage**: ~25 tests total; TJA1145 and MCP795W have zero tests; no interrupt flow or multi-peripheral tests. Existing tests were written against the old `run()` + `WaitCondition` pattern and may need updating for the coroutine model.
+- **Test coverage**: ~25 tests total; TJA1145, MCP795W, PCF8574, and HD44780 have zero tests; no interrupt flow or multi-peripheral tests.
 - **CAN scheduling**: `CANInterface` dispatches RX callbacks directly from ISR context. A future `Core`-integrated network scheduling mechanism will buffer frames and dispatch in `service()`.
 
 ## License

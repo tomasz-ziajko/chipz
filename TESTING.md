@@ -54,6 +54,7 @@ cmake --build . --target clean
 | `ParallelInterface` | — | not tested yet |
 | `DS3231` | — | not tested yet |
 | `MAX6675` | — | not tested yet |
+| `PCF8574` | — | not tested yet |
 | `HD44780` | — | not tested yet |
 | `TJA1145` | — | not tested yet |
 | `MCP795W` | — | not tested yet |
