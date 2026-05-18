@@ -37,7 +37,7 @@
  * TIM6
  * ----
  * HAL_TIM_PeriodElapsedCallback routes TIM6 update events to chipz_tim6_elapsed(),
- * which the application defines to call TIM6Timer::onElapsed().
+ * which the application defines to call HALTimer::onElapsed().
  */
 
 #include <chipz/core/communication_interface.hpp>
