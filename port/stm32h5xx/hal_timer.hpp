@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Commercial license available — see README
 
-#ifndef CHIPZ_PORT_STM32H5XX_TIM6_TIMER_HPP
-#define CHIPZ_PORT_STM32H5XX_TIM6_TIMER_HPP
+#ifndef CHIPZ_PORT_STM32H5XX_HAL_TIMER_HPP
+#define CHIPZ_PORT_STM32H5XX_HAL_TIMER_HPP
 
 #include <chipz/core/timer_interface.hpp>
 #include "stm32h5xx_hal.h"
@@ -11,14 +11,14 @@
 namespace chipz::port::stm32h5xx {
 
 /**
- * @brief One-shot ms-resolution timer backed by TIM6 in one-pulse mode.
+ * @brief One-shot ms-resolution timer backed by any STM32 basic/GP TIM peripheral.
  *
- * TIM6 must be configured by CubeMX with:
- *   - Prescaler = 31999  (32 MHz APB1 → 1 kHz counter = 1 ms / tick)
+ * The chosen TIM must be configured by CubeMX with:
+ *   - Prescaler set so that the counter ticks at 1 kHz (1 ms / tick)
  *   - One-pulse mode enabled
  *   - Update interrupt enabled
  *
- * schedule(N) programs TIM6 to fire exactly once after N milliseconds, then
+ * schedule(N) programs the timer to fire exactly once after N milliseconds, then
  * stops automatically. schedule() stops any in-progress count before
  * reprogramming, so it is safe to call while a previous count is running
  * (used by Core when a shorter deadline preempts a longer one).
@@ -28,11 +28,11 @@ namespace chipz::port::stm32h5xx {
  * SysTick is left exclusively for HAL — this class does not touch it.
  *
  * Wire the ISR in your application:
- *   extern "C" void chipz_tim6_elapsed() { g_tim6_timer.onElapsed(); }
+ *   extern "C" void chipz_tim6_elapsed() { g_timer.onElapsed(); }
  */
-class TIM6Timer final : public chipz::TimerInterface {
+class HALTimer final : public chipz::TimerInterface {
     public:
-    explicit TIM6Timer(TIM_HandleTypeDef& htim) : htim_(htim) {}
+    explicit HALTimer(TIM_HandleTypeDef& htim) : htim_(htim) {}
 
     void schedule(uint64_t ticks_from_now) override
     {
@@ -72,7 +72,7 @@ class TIM6Timer final : public chipz::TimerInterface {
         return 1000u;
     }
 
-    /// Called from HAL_TIM_PeriodElapsedCallback (via chipz_tim6_elapsed) when TIM6 fires.
+    /// Called from HAL_TIM_PeriodElapsedCallback (via chipz_tim6_elapsed) when the timer fires.
     void onElapsed()
     {
         if (on_elapsed_) {
@@ -86,4 +86,4 @@ class TIM6Timer final : public chipz::TimerInterface {
 
 }  // namespace chipz::port::stm32h5xx
 
-#endif  // CHIPZ_PORT_STM32H5XX_TIM6_TIMER_HPP
+#endif  // CHIPZ_PORT_STM32H5XX_HAL_TIMER_HPP

@@ -25,7 +25,7 @@
 #include "irq.hpp"
 #include "spin.hpp"
 #include "stm32h5xx_hal.h"
-#include "tim6_timer.hpp"
+#include "hal_timer.hpp"
 
 using chipz::port::stm32h5xx::IRQn;
 using chipz::port::stm32h5xx::kIRQnFirst;
@@ -56,7 +56,7 @@ PCF8574Type g_pcf8574{s_i2c1_pcf_write};
 // Route I2C1 ISR callbacks to g_pcf8574's parallel interface
 chipz::CommunicationInterface* g_i2c1_iface = &g_pcf8574.getParallelInterface();
 
-chipz::port::stm32h5xx::TIM6Timer        g_tim6_timer{htim6};
+chipz::port::stm32h5xx::HALTimer         g_tim6_timer{htim6};
 chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_tim6_timer, chipz::port::stm32h5xx::spinUs};
 
 chipz::devices::HD44780 g_hd44780{g_pcf8574.getParallelInterface(),

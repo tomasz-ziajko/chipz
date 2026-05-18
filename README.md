@@ -81,7 +81,7 @@ target_sources(my_app PRIVATE
 #include <chipz/interfaces/spi_interface.hpp>
 #include "port/stm32h5xx/irq.hpp"
 #include "port/stm32h5xx/spin.hpp"
-#include "port/stm32h5xx/tim6_timer.hpp"
+#include "port/stm32h5xx/hal_timer.hpp"
 #include "stm32h5xx_hal.h"
 
 using chipz::port::stm32h5xx::IRQn;
@@ -92,7 +92,7 @@ extern chipz::interfaces::I2CInterface g_i2c1;
 extern chipz::interfaces::SPIInterface g_spi2;
 extern TIM_HandleTypeDef htim6;
 
-chipz::port::stm32h5xx::TIM6Timer        g_tim6_timer{htim6};
+chipz::port::stm32h5xx::HALTimer         g_tim6_timer{htim6};
 chipz::Core<IRQn, kIRQnFirst, kIRQnLast> g_core{g_tim6_timer, chipz::port::stm32h5xx::spinUs};
 
 chipz::devices::DS3231  g_ds3231 {g_i2c1};
@@ -184,7 +184,7 @@ bool main() override {
 | `chipz_isrs.cpp`    | All ISR handlers, SysTick, EXTI0–15, TIM6, and HAL weak callback overrides for I2C/SPI/UART/FDCAN/TIM |
 | `fault_handlers.cpp`| HardFault, BusFault, MemManage, UsageFault with diagnostic register dumps |
 | `irq.hpp`           | `IRQn` enum mirroring CMSIS `IRQn_Type`; `kIRQnFirst`/`kIRQnLast` for `Core<>` template parameters |
-| `tim6_timer.hpp`    | `TIM6Timer : TimerInterface` — one-shot TIM6 for coarse ms deadline scheduling |
+| `hal_timer.hpp`     | `HALTimer : TimerInterface` — one-shot HAL TIM for coarse ms deadline scheduling |
 | `spin.hpp`          | `initDwt()` / `spinUs(us)` — DWT CYCCNT busy-spin for sub-ms fine delays |
 
 ### Hybrid TIM6 + DWT scheduling
@@ -311,7 +311,7 @@ chipz/
 │       ├── fault_handlers.cpp
 │       ├── irq.hpp
 │       ├── spin.hpp             # DWT CYCCNT busy-spin (initDwt / spinUs)
-│       └── tim6_timer.hpp      # TIM6Timer : TimerInterface
+│       └── hal_timer.hpp       # HALTimer : TimerInterface
 ├── examples/
 │   └── stm32H533RET/           # NUCLEO-H533RE: PCF8574 + HD44780 (I2C1, 20×4 LCD)
 │       ├── Chipz/demo/demo.cpp # Application entry points
